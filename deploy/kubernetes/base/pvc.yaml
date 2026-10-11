@@ -1,0 +1,24 @@
+# Two volumes, so that the two kinds of agent cannot reach each other's
+# state. The recipe runs write their results to aemtli-runs, which the UI
+# reads. goose serve keeps its settings, sessions and the chat's working
+# directory on aemtli-goose, where no run can plant an extension or an
+# "always allow" for the next chat.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aemtli-runs
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aemtli-goose
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 3Gi

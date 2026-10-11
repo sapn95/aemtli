@@ -1,0 +1,97 @@
+# Every Monday at 07:17, a digest of last week's releases.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: aemtli-release-watch
+  labels:
+    aemtli.sapn.ch/recipe: release-watch
+spec:
+  schedule: "17 7 * * 1"
+  timeZone: Europe/Zurich
+  suspend: false
+  # One run at a time, and a missed slot (node down, upgrade) is still run
+  # within the hour rather than skipped.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: aemtli
+        aemtli.sapn.ch/recipe: release-watch
+    spec:
+      # A failed run is not retried: a second attempt costs tokens again and
+      # usually fails the same way. The run page says why it failed.
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: aemtli-run
+            aemtli.sapn.ch/recipe: release-watch
+            aemtli.sapn.ch/trigger: schedule
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: run
+              image: ghcr.io/sapn95/aemtli
+              args: ["aemtli", "run", "release-watch"]
+              envFrom:
+                - configMapRef:
+                    name: aemtli-goose-env
+              env:
+                # Nobody is there to approve a tool call.
+                - name: GOOSE_MODE
+                  value: auto
+                # goose's default is a thousand turns.
+                - name: AEMTLI_MAX_TURNS
+                  value: "40"
+                # "schedule", or "manual" when the UI started the Job.
+                - name: AEMTLI_TRIGGER
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['aemtli.sapn.ch/trigger']
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 1Gi
+              # goose's own state stays in the throwaway home: a run keeps
+              # nothing between runs but its result.
+              volumeMounts:
+                - name: runs
+                  mountPath: /data/runs
+                - name: recipes
+                  mountPath: /recipes
+                  readOnly: true
+                - name: home
+                  mountPath: /home/goose
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: runs
+              persistentVolumeClaim:
+                claimName: aemtli-runs
+            - name: recipes
+              configMap:
+                name: aemtli-recipes
+            - name: home
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

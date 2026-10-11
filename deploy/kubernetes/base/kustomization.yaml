@@ -1,0 +1,20 @@
+# The parts every ämtli install has: goose serve, the web UI, the volume
+# they share, the UI's permissions and the network rules. An overlay adds
+# the recipes, one CronJob per recipe, the secrets and the settings (see
+# ../example).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: aemtli
+    includeSelectors: false
+resources:
+  - pvc.yaml
+  - goose.yaml
+  - model-proxy.yaml
+  - web.yaml
+  - rbac.yaml
+  - networkpolicy.yaml
+images:
+  - name: ghcr.io/sapn95/aemtli
+    newTag: 0.1.0

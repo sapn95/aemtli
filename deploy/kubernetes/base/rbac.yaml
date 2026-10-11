@@ -1,0 +1,30 @@
+# Exactly what the UI calls: list the recipe CronJobs, list their Jobs, read
+# one CronJob and create a Job from it ("Run now"). Nothing else, nowhere else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aemtli-web
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aemtli-web
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aemtli-web
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aemtli-web
+subjects:
+  - kind: ServiceAccount
+    name: aemtli-web

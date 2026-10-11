@@ -1,0 +1,46 @@
+{
+  "messages": [
+    {
+      "id": null,
+      "role": "user",
+      "created": 1791727929,
+      "content": [
+        {
+          "type": "text",
+          "text": "Sag hallo auf Berndeutsch."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "chatcmpl-fake",
+      "role": "assistant",
+      "created": 1791727929,
+      "content": [
+        {
+          "type": "text",
+          "text": "Hallo vom Fake-Modell."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true,
+        "inference": {
+          "provider": "openai",
+          "requestedModel": "fake-model"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "total_tokens": 15,
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "cache_read_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "status": "completed"
+  }
+}
