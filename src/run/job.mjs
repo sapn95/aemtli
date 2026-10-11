@@ -26,7 +26,9 @@ export const DEFAULT_MODEL = 'claude-haiku-5-5';
 
 /** The model client, through the model proxy that holds the real key. */
 function anthropicFrom(env) {
-  return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY ?? 'placeholder', baseURL: env.ANTHROPIC_HOST, maxRetries: 2 });
+  // Two minutes a call: a run has half an hour in all, and a hung call must
+  // not take it, or the run is killed before it can record why.
+  return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY ?? 'placeholder', baseURL: env.ANTHROPIC_HOST, maxRetries: 2, timeout: 120_000 });
 }
 
 /**
@@ -61,10 +63,13 @@ export async function runJob({
   // Next to the job's runs, on the one volume a run may write.
   const statePath = join(dataDir, 'runs', name, 'state.json');
   let state = {};
-  try {
-    state = JSON.parse(readFileSync(statePath, 'utf8'));
-  } catch {
-    // The first run, or a state nobody can read: start empty.
+  if (existsSync(statePath)) {
+    try {
+      state = JSON.parse(readFileSync(statePath, 'utf8'));
+    } catch (err) {
+      // Started empty, which may repeat what was reported before: say so.
+      log(`the state could not be read and starts empty: ${err.message}`);
+    }
   }
 
   const tokens = { input: 0, output: 0, total: 0 };
@@ -99,7 +104,10 @@ export async function runJob({
       tokens.output += response.usage?.output_tokens ?? 0;
       tokens.total = tokens.input + tokens.output;
       log(`asked ${model}: ${response.usage?.input_tokens ?? 0} in, ${response.usage?.output_tokens ?? 0} out`);
-      return response.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+      const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+      if (response.stop_reason !== 'max_tokens') return text;
+      log(`the answer was cut at ${maxTokens} tokens`);
+      return `${text}\n\n*The answer was cut at its length limit.*`;
     },
   };
 
@@ -116,7 +124,7 @@ export async function runJob({
     error = err.message;
     log(`failed: ${err.stack ?? err.message}`);
   } finally {
-    await Promise.all(clients.map(c => c.close()));
+    await Promise.allSettled(clients.map(c => c.close()));
   }
 
   const finished = now();

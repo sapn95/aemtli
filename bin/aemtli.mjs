@@ -29,6 +29,12 @@ function required(name) {
   return env[name];
 }
 
+/** AEMTLI_KEEP_RUNS as a count of at least 1; anything else keeps 50. */
+const keepRuns = () => {
+  const n = Number(env.AEMTLI_KEEP_RUNS);
+  return Number.isInteger(n) && n >= 1 ? n : 50;
+};
+
 const USAGE = `ämtli ${version}
 
   aemtli run <recipe> [--param key=value]...   run one recipe with goose, record the result
@@ -59,7 +65,7 @@ async function run(args) {
     goose: env.GOOSE_BIN ?? 'goose',
     params: values.param ?? [],
     maxTurns: env.AEMTLI_MAX_TURNS ? Number(env.AEMTLI_MAX_TURNS) : undefined,
-    keep: env.AEMTLI_KEEP_RUNS ? Number(env.AEMTLI_KEEP_RUNS) : 50,
+    keep: keepRuns(),
     trigger: env.AEMTLI_TRIGGER || 'manual',
     signal: controller.signal,
     });
@@ -192,9 +198,12 @@ async function job(args) {
     recipesDir: env.RECIPES_DIR ?? '/recipes',
     dataDir: env.DATA_DIR ?? '/data',
     trigger: env.AEMTLI_TRIGGER === 'schedule' ? 'schedule' : 'manual',
-    keep: env.AEMTLI_KEEP_RUNS ? Number(env.AEMTLI_KEEP_RUNS) : 50,
+    keep: keepRuns(),
     params,
     gateways,
+  }).catch(err => {
+    console.error(err.message);
+    process.exit(2);
   });
   log(`${record.recipe} ${record.id}: ${record.status}${record.error ? ` (${record.error})` : ''}, ${record.tokens.total} tokens`);
   process.exit(record.status === 'succeeded' ? 0 : 1);
