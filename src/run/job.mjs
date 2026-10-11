@@ -23,6 +23,7 @@ import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME } from 
 import { createMcpClient } from './mcp-client.mjs';
 
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
+const THINKING_ROOM = 2048;
 
 /** The model client, through the model proxy that holds the real key. */
 function anthropicFrom(env) {
@@ -91,11 +92,17 @@ export async function runJob({
       clients.push(client);
       return client;
     },
-    /** Asks the model once and resolves with its text. */
-    async ask({ prompt, system, model = DEFAULT_MODEL, maxTokens = 1024 }) {
+    /**
+     * Asks the model once and resolves with its text. `maxTokens` is the room
+     * for the answer; current models think first by default and that counts
+     * too, so the request gets THINKING_ROOM on top, and `effort` (low by
+     * default) keeps the thinking short.
+     */
+    async ask({ prompt, system, model = DEFAULT_MODEL, maxTokens = 1024, effort = 'low' }) {
       const response = await anthropic.messages.create({
         model,
-        max_tokens: maxTokens,
+        max_tokens: maxTokens + THINKING_ROOM,
+        output_config: { effort },
         ...(system ? { system } : {}),
         messages: [{ role: 'user', content: prompt }],
       });
@@ -106,7 +113,10 @@ export async function runJob({
       log(`asked ${model}: ${response.usage?.input_tokens ?? 0} in, ${response.usage?.output_tokens ?? 0} out`);
       const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
       if (response.stop_reason !== 'max_tokens') return text;
-      log(`the answer was cut at ${maxTokens} tokens`);
+      // Thinking took it all: there is no answer to keep. Failing leaves the
+      // job's state as it was, so the next run asks again.
+      if (!text.trim()) throw new Error(`the model used its ${maxTokens + THINKING_ROOM} tokens before it answered`);
+      log(`the answer was cut at ${maxTokens + THINKING_ROOM} tokens`);
       return `${text}\n\n*The answer was cut at its length limit.*`;
     },
   };
