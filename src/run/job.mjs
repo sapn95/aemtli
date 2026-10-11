@@ -5,6 +5,8 @@
 //   ctx.mcp('epost')         an MCP client for a gateway (approvals still apply)
 //   ctx.ask({ prompt, ... }) one message to the model through the model proxy;
 //                            a small model by default, tokens counted
+//   ctx.notify({...})        one push through ntfy, when the run is worth a
+//                            look on a phone
 //   ctx.state                JSON kept between runs of this job (save with
 //                            ctx.saveState()), e.g. what was already reported
 //   ctx.fetch, ctx.log, ctx.now, ctx.params
@@ -73,6 +75,11 @@ export async function runJob({
     }
   }
 
+  // Where a job may push, if the pod was given the settings for it.
+  const ntfy = env.NTFY_URL && env.NTFY_TOPIC && env.NTFY_TOKEN_FILE
+    ? { url: new URL(env.NTFY_URL).origin + new URL(env.NTFY_URL).pathname.replace(/\/$/, ''), topic: env.NTFY_TOPIC, tokenFile: env.NTFY_TOKEN_FILE }
+    : null;
+
   const tokens = { input: 0, output: 0, total: 0 };
   const models = new Set();
   const clients = [];
@@ -84,6 +91,38 @@ export async function runJob({
     now,
     saveState() {
       writeJsonAtomic(statePath, ctx.state);
+    },
+    /**
+     * Sends one push. `title` and `message` are the whole of it: a phone
+     * shows little, and what a job read may be nobody else's business.
+     * Resolves to true when it went out, false when the pod has no ntfy
+     * settings or ntfy refused, which never fails the run.
+     */
+    async notify({ title, message, click = env.PUBLIC_ORIGIN, tags = 'bell' }) {
+      if (!ntfy) {
+        log('nothing to notify with: NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE are not all set');
+        return false;
+      }
+      try {
+        const res = await fetchImpl(`${ntfy.url}/${ntfy.topic}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${readFileSync(ntfy.tokenFile, 'utf8').trim()}`,
+            // Headers carry latin-1 only, and a phone shows one line.
+            title: String(title).replace(/[^\x20-\x7e]/g, '?').slice(0, 120),
+            tags,
+            ...(click ? { click } : {}),
+          },
+          body: String(message).slice(0, 2000),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
+        log('notified');
+        return true;
+      } catch (err) {
+        log(`could not notify: ${err.message}`);
+        return false;
+      }
     },
     mcp(gateway) {
       const url = gateways[gateway];

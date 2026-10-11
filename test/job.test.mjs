@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,6 +161,61 @@ test('a keep count that is not a positive whole number prunes nothing', () => {
   for (const keep of [NaN, 0, -1, 1.5, undefined]) assert.equal(pruneRuns(dataDir, 'x', keep), 0, String(keep));
   assert.equal(listRuns(dataDir, 'x').length, 2);
   assert.equal(pruneRuns(dataDir, 'x', 1), 1);
+});
+
+test('a job can push once through ntfy, and a run without the settings says so', async () => {
+  const pushes = [];
+  const ntfy = createServer((req, res) => {
+    let text = '';
+    req.on('data', c => { text += c; });
+    req.on('end', () => { pushes.push({ path: req.url, headers: req.headers, text }); res.writeHead(pushes.length > 1 ? 503 : 200).end('{}'); });
+  });
+  await new Promise(r => ntfy.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${ntfy.address().port}/`;
+  const { recipesDir, dataDir } = dirs({ push: `export default async function (ctx) {
+  const first = await ctx.notify({ title: 'Heute: 3 Termine', message: 'Grüessech' });
+  const second = await ctx.notify({ title: 'again', message: 'x' });
+  return \`\${first} \${second}\`;
+}
+` });
+  const tokenFile = join(dataDir, 'ntfy-token');
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(tokenFile, 'tk_secret\n');
+  try {
+    const env = { NTFY_URL: url, NTFY_TOPIC: 'chores', NTFY_TOKEN_FILE: tokenFile, PUBLIC_ORIGIN: 'https://chores.example' };
+    const run = await runJob({ name: 'push', recipesDir, dataDir, env, anthropic: null });
+    assert.equal(read(dataDir, 'push', run.id, 'result.md'), 'true false\n', 'a refused push is false, not a failure');
+    assert.equal(run.status, 'succeeded');
+    assert.equal(pushes.length, 2);
+    assert.equal(pushes[0].path, '/chores');
+    assert.equal(pushes[0].headers.authorization, 'Bearer tk_secret');
+    assert.equal(pushes[0].headers.title, 'Heute: 3 Termine');
+    assert.equal(pushes[0].headers.click, 'https://chores.example');
+    assert.equal(pushes[0].text, 'Grüessech');
+    assert.match(read(dataDir, 'push', run.id, 'run.log'), /could not notify: ntfy answered 503/);
+
+    const without = await runJob({ name: 'push', recipesDir, dataDir, anthropic: null });
+    assert.equal(read(dataDir, 'push', without.id, 'result.md'), 'false false\n');
+    assert.match(read(dataDir, 'push', without.id, 'run.log'), /NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE are not all set/);
+  } finally {
+    ntfy.close();
+  }
+});
+
+test('a title a phone cannot show is cut down to what it can', async () => {
+  const seen = [];
+  const ntfy = createServer((req, res) => { seen.push(req.headers.title); req.resume(); req.on('end', () => res.writeHead(200).end('{}')); });
+  await new Promise(r => ntfy.listen(0, '127.0.0.1', r));
+  const { recipesDir, dataDir } = dirs({ odd: "export default async ctx => ctx.notify({ title: 'Grüessech ✓ ' + 'x'.repeat(200), message: 'y' });\n" });
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 't'), 'tk');
+  try {
+    await runJob({ name: 'odd', recipesDir, dataDir, anthropic: null, env: { NTFY_URL: `http://127.0.0.1:${ntfy.address().port}`, NTFY_TOPIC: 'c', NTFY_TOKEN_FILE: join(dataDir, 't') } });
+    assert.equal(seen[0].length, 120);
+    assert.match(seen[0], /^Gr\?essech \? x+$/, 'one ? for each character a header cannot carry');
+  } finally {
+    ntfy.close();
+  }
 });
 
 test('a job file names itself in its first comment lines', () => {
