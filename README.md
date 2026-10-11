@@ -66,9 +66,11 @@ export default async function (ctx) {
 }
 ```
 
-- `ctx.ask({ prompt, system, model, maxTokens })` sends one message to the
-  model through the model proxy. The model defaults to `claude-haiku-5-5`;
-  tokens are counted into the run.
+- `ctx.ask({ prompt, system, model, maxTokens, effort })` sends one message
+  to the model through the model proxy. The model defaults to
+  `claude-haiku-5-5` and `effort` to `low`. Current models think before they
+  answer, and that counts against the token limit, so the request gets 2048
+  tokens on top of `maxTokens`. Tokens are counted into the run.
 - `ctx.mcp('<gateway>')` is an MCP client for a gateway named in
   `MCP_GATEWAYS`, with `tools()`, `call(name, args)` and `json(name, args)`.
   Approvals apply as they do for agents.

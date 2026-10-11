@@ -127,7 +127,22 @@ test('an answer cut at its length limit says so', async () => {
   const anthropic = { messages: { create: async () => ({ content: [{ type: 'text', text: 'half a sen' }], stop_reason: 'max_tokens', usage: { input_tokens: 3, output_tokens: 5 } }) } };
   const run = await runJob({ name: 'cut', recipesDir, dataDir, anthropic });
   assert.equal(read(dataDir, 'cut', run.id, 'result.md'), 'half a sen\n\n*The answer was cut at its length limit.*\n');
-  assert.match(read(dataDir, 'cut', run.id, 'run.log'), /cut at 5 tokens/);
+  assert.match(read(dataDir, 'cut', run.id, 'run.log'), /cut at 2053 tokens/);
+});
+
+test('ask leaves room for thinking, keeps it short, and fails when only thinking came back', async () => {
+  const seen = [];
+  const { recipesDir, dataDir } = dirs({ think: 'export default async ctx => ctx.ask({ prompt: "x", maxTokens: 100 });\n' });
+  const anthropic = { messages: { create: async req => {
+    seen.push(req);
+    return { content: [{ type: 'thinking', thinking: '', signature: 's' }], stop_reason: 'max_tokens', usage: { input_tokens: 3, output_tokens: 2148 } };
+  } } };
+  const run = await runJob({ name: 'think', recipesDir, dataDir, anthropic });
+  assert.equal(seen[0].max_tokens, 2148);
+  assert.deepEqual(seen[0].output_config, { effort: 'low' });
+  assert.equal(run.status, 'failed');
+  assert.equal(run.error, 'the model used its 2148 tokens before it answered');
+  assert.equal(run.tokens.total, 2151, 'what it cost is still counted');
 });
 
 test('a state that cannot be read starts empty, and the log says so', async () => {
