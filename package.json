@@ -25,6 +25,7 @@
     "url": "git+https://github.com/sapn95/aemtli.git"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "markdown-it": "^15.0.2",
     "yaml": "^2.9.1"
   },

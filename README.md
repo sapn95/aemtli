@@ -12,7 +12,8 @@ goose at a provider with an API key, or at an Ollama on another machine.
 
 | Part | What it does |
 | --- | --- |
-| `aemtli run <recipe>` | What a CronJob runs. Starts `goose run --recipe`, waits, and writes `run.json`, `result.md` and `run.log` to the shared volume. Exit 0 only if a model actually answered. |
+| `aemtli run <recipe>` | What a CronJob runs for an agent's chore. Starts `goose run --recipe`, waits, and writes `run.json`, `result.md` and `run.log` to the shared volume. Exit 0 only if a model actually answered. |
+| `aemtli job <name>` | What a CronJob runs for a chore that code can do. Runs `<name>.mjs`, which asks the model only where judgement is needed, through the model proxy and a small model by default. Recorded like a goose run. |
 | `aemtli web` | The dashboard, the run pages, and the chat. The dashboard draws the week like a chore chart: a tick for each run, a red cross where one failed, an empty box where a slot passed without a run, and the times still due. Below it, every recipe with its schedule in words ("Weekdays at 07:00"), its next and last run, and "Run now". A run page shows the answer rendered from Markdown. |
 | `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
@@ -48,6 +49,40 @@ Two things goose does that the runner works around:
 - A tool a person chose to "always allow" in the chat is remembered in
   `/data/goose/config/goose/permission.yaml` in the goose pod. Delete the
   line to be asked again.
+
+## Jobs: code first, the model where it pays
+
+Most chores are the same steps every time: fetch, filter, file by a rule.
+Those are code. A job is a JavaScript module next to the recipes; its
+default export gets a context and returns the result as Markdown:
+
+```js
+// title: Release watch
+// description: What changed this week in the projects the homelab runs
+export default async function (ctx) {
+  const news = /* fetch and filter in code */ [];
+  if (!news.length) return 'Nothing new.';            // no model call, no tokens
+  return ctx.ask({ prompt: `One line each:\n${news.join('\n')}` });
+}
+```
+
+- `ctx.ask({ prompt, system, model, maxTokens })` sends one message to the
+  model through the model proxy. The model defaults to `claude-haiku-5-5`;
+  tokens are counted into the run.
+- `ctx.mcp('<gateway>')` is an MCP client for a gateway named in
+  `MCP_GATEWAYS`, with `tools()`, `call(name, args)` and `json(name, args)`.
+  Approvals apply as they do for agents.
+- `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
+  new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
+
+The model in a job gets text and gives text back. It has no tools, so what a
+letter or a release note says cannot make it do anything. Use a goose recipe
+for chores that really need an agent to decide its own steps.
+
+The example's `release-watch` is a job: the feeds are read and filtered in
+code, and the model is asked only to sum up releases it has not seen. A week
+with nothing new costs nothing; the goose recipe it replaced spent about
+30,000 tokens on the same answer.
 
 ## Tools that need a yes
 
@@ -160,6 +195,10 @@ credentials.
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),
 `MODEL_AUTH_PREFIX` ("Bearer " with its space, for those), `MODEL_KEY_FILE`
 (`/secrets/model/key`), `MODEL_ALLOW_PATHS` (`/v1/`).
+
+`aemtli job`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER`, `AEMTLI_KEEP_RUNS`,
+`MCP_GATEWAYS` (JSON: `{"epost":"http://aemtli-mcp-epost:8080/mcp"}`), and
+`ANTHROPIC_HOST` with a placeholder `ANTHROPIC_API_KEY` for the proxy.
 
 `aemtli run`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER` (`schedule` or
 `manual`), `AEMTLI_MAX_TURNS` (goose's own default is 1000), `AEMTLI_KEEP_RUNS`

@@ -33,7 +33,7 @@ configMapGenerator:
   - name: aemtli-recipes
     files:
       - recipes/hello.yaml
-      - recipes/release-watch.yaml
+      - recipes/release-watch.mjs
   # goose talks to the model through aemtli-model-proxy, which adds the key;
   # the key here is a placeholder goose insists on having.
   - name: aemtli-goose-env

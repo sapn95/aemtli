@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { nextRun, describeCron, runsBetween, weekOf } from './cron.mjs';
 import { renderMarkdown } from './markdown.mjs';
+import { jobMeta } from '../run/meta.mjs';
 import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
@@ -46,7 +47,13 @@ function recipeMeta(recipesDir, name) {
     const doc = parseYaml(readFileSync(join(recipesDir, `${name}.yaml`), 'utf8'));
     return { title: doc?.title ?? name, description: doc?.description ?? '' };
   } catch {
-    return { title: name, description: '' };
+    // A job: its title and description sit in its first comment lines.
+    try {
+      const meta = jobMeta(readFileSync(join(recipesDir, `${name}.mjs`), 'utf8'));
+      return { title: meta.title ?? name, description: meta.description ?? '' };
+    } catch {
+      return { title: name, description: '' };
+    }
   }
 }
 
