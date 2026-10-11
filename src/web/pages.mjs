@@ -57,6 +57,7 @@ export function layout({ title, user, version, body, script, active }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>${esc(title)} – ämtli</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="preload" href="/static/fonts/schibsted-grotesk.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/app.css">
 </head>

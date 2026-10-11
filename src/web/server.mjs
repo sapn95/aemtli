@@ -16,6 +16,7 @@ import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from 
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const STATIC = {
+  'icon.svg': 'image/svg+xml',
   'app.css': 'text/css',
   'app.js': 'text/javascript',
   'chat.js': 'text/javascript',
