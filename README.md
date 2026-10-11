@@ -16,8 +16,9 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `aemtli web` | The dashboard, the run pages, and the chat. The dashboard draws the week like a chore chart: a tick for each run, a red cross where one failed, an empty box where a slot passed without a run, and the times still due. Below it, every recipe with its schedule in words ("Weekdays at 07:00"), its next and last run, and "Run now". A run page shows the answer rendered from Markdown. |
 | `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
+| `aemtli mcp-gateway` | Serves one MCP server to the agents, in a pod that alone holds that server's credentials. Calls the owner has to approve are held until they decide in the UI. |
 
-One image holds all four: goose, node and npm (for MCP servers started with
+One image holds all five: goose, node and npm (for MCP servers started with
 `npx`), uv and python (for `uvx`), and the app.
 
 ```text
@@ -48,6 +49,48 @@ Two things goose does that the runner works around:
   `/data/goose/config/goose/permission.yaml` in the goose pod. Delete the
   line to be asked again.
 
+## Tools that need a yes
+
+An MCP server that can send a letter or a mail should not need a person for
+reading, and should not do the sending without one. Each such server runs
+behind its own `aemtli mcp-gateway`:
+
+- The gateway pod is the only place the server's credentials live. The
+  agents reach it over MCP's Streamable HTTP transport; it starts the server
+  over stdio, one process per agent session.
+- A policy file sorts the server's tools: `allow` runs, `approve` is held,
+  `deny` is not even listed. A tool no list names is held, so a new tool in
+  an update waits for a decision instead of running.
+- A held call answers the agent at once ("waiting as request …"), so a
+  scheduled run ends normally and says what waits. The UI shows each held
+  call with its arguments under "Needs you" on the dashboard, and on the
+  Approvals page. Approve runs the call in a fresh process and shows what
+  came back; Reject records that nothing ran. Nobody deciding for seven days
+  expires it.
+- With `NTFY_URL` set, the UI sends one push per held call: the gateway's
+  name and the tool, never the arguments.
+
+```yaml
+# a gateway's policy
+default: approve
+allow: [epost_list_*, epost_get_letter, epost_store_letter]
+approve: [epost_delete_letter]
+deny: [epost_login]
+```
+
+The example has one gateway, for [epost-mcp](https://github.com/sapn95/epost-mcp),
+in [`deploy/kubernetes/example/mcp-epost`](deploy/kubernetes/example/mcp-epost).
+Its pod installs the server from a pinned lockfile at start and reaches only
+DNS and public HTTPS. In a recipe or the chat, a gateway is an extension:
+
+```yaml
+extensions:
+  - type: streamable_http
+    name: epost
+    uri: http://aemtli-mcp-epost:8080/mcp
+    timeout: 120
+```
+
 ## Security
 
 - **Who gets in.** Cloudflare Access with GitHub login decides that at the
@@ -74,6 +117,11 @@ Two things goose does that the runner works around:
     is not a regular file, and reads at most a fixed size.
   - Only the web pod may open goose's port. The server secret is generated
     by ESO; the web pod and goose have it, the browser never does.
+  - MCP servers with credentials run behind gateways, in pods of their own.
+    The agents can call their tools but never see the credentials, and the
+    calls that need approval cannot be approved by an agent: the approvals
+    port takes a token only the UI has, and the NetworkPolicy lets only the
+    UI reach it. The arguments of held calls are not logged.
 - **Pod security.** The example namespace enforces the `restricted` Pod
   Security Standard, so the Jobs the UI may create cannot ask for privileges.
 - **The UI's own rights** are one Role: read CronJobs, list and create Jobs,
@@ -97,6 +145,16 @@ Two things goose does that the runner works around:
 | `DATA_DIR`, `RECIPES_DIR` | `/data`, `/recipes` | |
 | `CHAT_CWD` | `/data/workspace` | goose's working directory for chat sessions |
 | `DISPLAY_TIME_ZONE` | `UTC` | the zone the dashboard shows times and weeks in, e.g. `Europe/Zurich` |
+| `GATEWAYS` | | JSON: `[{"name":"epost","title":"ePost","url":"http://aemtli-mcp-epost:8081","mcp":"http://aemtli-mcp-epost:8080/mcp"}]`. `url` is the approvals port; with `mcp`, every chat session gets the gateway as a tool server |
+| `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token |
+| `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | where held calls are pushed; without `NTFY_URL`, no pushes |
+| `NOTIFY_STATE_FILE` | `$DATA_DIR/notified.json` | which held calls were pushed already |
+
+`aemtli mcp-gateway`: `MCP_COMMAND` (the server's argv as JSON),
+`POLICY_FILE`, `ADMIN_TOKEN_FILE` (at least 16 characters), `STATE_DIR`
+(`/state`), `PORT` (8080, for agents), `ADMIN_PORT` (8081, for the UI). Every
+other variable passes through to the MCP server, which is how it gets its
+credentials.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),

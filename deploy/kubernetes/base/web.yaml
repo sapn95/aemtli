@@ -50,6 +50,15 @@ spec:
             # goose's own path for the chat's working directory.
             - name: CHAT_CWD
               value: /data/goose/workspace
+            # One token per MCP gateway, a file named after it; see GATEWAYS.
+            - name: GATEWAY_TOKENS_DIR
+              value: /secrets/gateways
+            - name: NTFY_TOKEN_FILE
+              value: /secrets/ntfy/token
+            # Which held calls were pushed already. On an emptyDir: after a
+            # restart, what still waits is pushed once more.
+            - name: NOTIFY_STATE_FILE
+              value: /state/notified.json
           readinessProbe:
             httpGet:
               path: /healthz
@@ -77,6 +86,14 @@ spec:
             - name: recipes
               mountPath: /recipes
               readOnly: true
+            - name: gateway-tokens
+              mountPath: /secrets/gateways
+              readOnly: true
+            - name: ntfy
+              mountPath: /secrets/ntfy
+              readOnly: true
+            - name: state
+              mountPath: /state
       volumes:
         - name: runs
           persistentVolumeClaim:
@@ -85,6 +102,20 @@ spec:
         - name: recipes
           configMap:
             name: aemtli-recipes
+        # Both optional: without gateways or ntfy the UI runs as before.
+        - name: gateway-tokens
+          secret:
+            secretName: aemtli-gateway-tokens
+            defaultMode: 0440
+            optional: true
+        - name: ntfy
+          secret:
+            secretName: aemtli-ntfy
+            defaultMode: 0440
+            optional: true
+        - name: state
+          emptyDir:
+            sizeLimit: 1Mi
 ---
 apiVersion: v1
 kind: Service

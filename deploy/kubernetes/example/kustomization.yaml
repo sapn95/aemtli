@@ -1,5 +1,5 @@
 # A complete install on top of ../base: the recipes, one CronJob per recipe,
-# the settings, and the two secrets. The secrets come through the External
+# the settings, the two secrets, and one MCP gateway (ePost). The secrets come through the External
 # Secrets Operator: the model key from a ClusterSecretStore called
 # "proton-pass" (github.com/sapn95/eso-proton-pass), the goose server key from
 # ESO's Password generator, so nobody ever has to make one up.
@@ -14,7 +14,7 @@ labels:
     includeSelectors: false
 images:
   - name: ghcr.io/sapn95/aemtli
-    newTag: 0.2.0
+    newTag: 0.3.0
 resources:
   - namespace.yaml
   - ../base
@@ -22,7 +22,14 @@ resources:
   - cronjob-hello.yaml
   - cronjob-release-watch.yaml
   - networkpolicy-ingress.yaml
+  - mcp-epost/gateway.yaml
+  - mcp-epost/secrets.yaml
 configMapGenerator:
+  - name: aemtli-mcp-epost
+    files:
+      - mcp-epost/policy.yaml
+      - mcp-epost/package.json
+      - mcp-epost/package-lock.json
   - name: aemtli-recipes
     files:
       - recipes/hello.yaml
@@ -47,3 +54,7 @@ configMapGenerator:
       - ALLOWED_EMAILS=owner@example.com
       - PUBLIC_ORIGIN=https://chores.example.com
       - DISPLAY_TIME_ZONE=Europe/Zurich
+      # The MCP gateways the UI asks for held calls, and where it pushes.
+      - 'GATEWAYS=[{"name":"epost","title":"ePost","url":"http://aemtli-mcp-epost:8081","mcp":"http://aemtli-mcp-epost:8080/mcp"}]'
+      - NTFY_URL=https://ntfy.example.com
+      - NTFY_TOPIC=chores

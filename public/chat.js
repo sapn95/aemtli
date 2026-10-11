@@ -138,7 +138,8 @@ function onMessage(event) {
 
 /** Starts a new session in the selected mode. */
 async function newSession() {
-  const created = await call('session/new', { cwd: log.dataset.cwd, mcpServers: [] });
+  // The MCP gateways, which goose connects to for this session only.
+  const created = await call('session/new', { cwd: log.dataset.cwd, mcpServers: JSON.parse(log.dataset.mcp || '[]') });
   sessionId = created.sessionId;
   await call('session/set_mode', { sessionId, modeId: mode.value });
   log.replaceChildren();

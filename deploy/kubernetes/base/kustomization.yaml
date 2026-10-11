@@ -17,4 +17,4 @@ resources:
   - networkpolicy.yaml
 images:
   - name: ghcr.io/sapn95/aemtli
-    newTag: 0.2.0
+    newTag: 0.3.0

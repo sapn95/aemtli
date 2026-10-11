@@ -59,17 +59,24 @@ const server = createServer(async (req, res) => {
   const id = 'chatcmpl-fake';
   const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
   // "TOOL" in the last user message makes the model call the first shell-like
-  // tool once; after the tool's result comes back, it answers with that result.
+  // tool once; "CALL:<name> <json>" calls the tool whose name ends in <name>
+  // with those arguments. After the tool's result comes back, it answers with
+  // that result.
   const messages = request.messages ?? [];
   const last = messages.at(-1) ?? {};
   const lastUser = [...messages].reverse().find(m => m.role === 'user');
-  const wantsTool = JSON.stringify(lastUser?.content ?? '').includes('TOOL') && last.role !== 'tool';
-  const shell = (request.tools ?? []).find(t => /shell/.test(t.function?.name ?? ''));
+  const said = typeof lastUser?.content === 'string' ? lastUser.content : JSON.stringify(lastUser?.content ?? '');
+  const named = said.match(/CALL:(\w+)(?: (\{[^}]*\}))?/);
+  const wantsTool = (named || said.includes('TOOL')) && last.role !== 'tool';
+  const shell = named
+    ? (request.tools ?? []).find(t => (t.function?.name ?? '').endsWith(named[1]))
+    : (request.tools ?? []).find(t => /shell/.test(t.function?.name ?? ''));
   if (wantsTool && shell && request.stream) {
+    const args = named ? (named[2] ?? '{}').replace(/\\"/g, '"') : JSON.stringify({ command: 'echo tool-ran-here' });
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: 0, model: request.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
     res.write(chunk({ role: 'assistant', content: null, tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: shell.function.name, arguments: '' } }] }));
-    res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ command: 'echo tool-ran-here' }) } }] }));
+    res.write(chunk({ tool_calls: [{ index: 0, function: { arguments: args } }] }));
     res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: 0, model: request.model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage })}\n\n`);
     return res.end('data: [DONE]\n\n');
   }

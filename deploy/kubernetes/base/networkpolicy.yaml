@@ -37,6 +37,13 @@ spec:
               app.kubernetes.io/name: aemtli-model-proxy
       ports:
         - port: 8080
+    # MCP gateways, on their agent port only. The approvals port is the UI's.
+    - to:
+        - podSelector:
+            matchLabels:
+              aemtli.sapn.ch/role: mcp-gateway
+      ports:
+        - port: 8080
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -110,7 +117,61 @@ spec:
               app.kubernetes.io/name: aemtli-goose
       ports:
         - port: 3284
+    # The MCP gateways' approvals port.
+    - to:
+        - podSelector:
+            matchLabels:
+              aemtli.sapn.ch/role: mcp-gateway
+      ports:
+        - port: 8081
     # The API server (6443 on k3s, 443 elsewhere) and the Access certs.
     - ports:
         - {port: 443, protocol: TCP}
         - {port: 6443, protocol: TCP}
+---
+# An MCP gateway holds an MCP server's credentials. Agents reach its MCP
+# port, the UI its approvals port, nothing else reaches it, and it reaches
+# DNS and public HTTPS (the service the MCP server talks to). A server that
+# needs more, such as an IMAP bridge in the cluster, gets an extra policy in
+# the overlay.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aemtli-mcp-gateway
+spec:
+  podSelector:
+    matchLabels:
+      aemtli.sapn.ch/role: mcp-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [aemtli-goose, aemtli-run]
+      ports:
+        - port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aemtli-web
+      ports:
+        - port: 8081
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - {port: 443, protocol: TCP}

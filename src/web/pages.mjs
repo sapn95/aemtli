@@ -7,6 +7,8 @@
 // household: one row per chore, one column per day, a tick where it was
 // done and a red stroke where it was not.
 
+import { toolWords } from './approvals.mjs';
+
 /** Escapes text for HTML element content and attribute values. */
 export function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -61,7 +63,7 @@ export function layout({ title, user, version, body, script, active }) {
 <body>
 <header class="top">
   <a class="wordmark" href="/">ämtli</a>
-  <nav>${nav('/', 'Chores', 'chores')}${nav('/chat', 'Chat', 'chat')}</nav>
+  <nav>${nav('/', 'Chores', 'chores')}${nav('/approvals', 'Approvals', 'approvals')}${nav('/chat', 'Chat', 'chat')}</nav>
   <span class="who">${esc(user ?? '')}</span>
 </header>
 <main>
@@ -132,13 +134,81 @@ ${rows}
 </ul><p id="notice" class="notice" role="status"></p></section>`;
 }
 
+const REQUEST_WORDS = { pending: 'Waiting', running: 'Running', done: 'Done', failed: 'Failed', rejected: 'Rejected', expired: 'Expired' };
+const REQUEST_CLASS = { pending: 'running', running: 'running', done: 'succeeded', failed: 'failed', rejected: 'none', expired: 'none' };
+
+/**
+ * Text as it will run, with nothing hidden: characters that render as nothing
+ * or reorder what follows (zero-width, bidi controls, other controls) are
+ * written out as their code point, so what the owner reads is what executes.
+ */
+export function visible(text) {
+  return esc(String(text)).replace(/(?![\n\t])[\p{Cc}\p{Cf}\p{Variation_Selector}\u115f\u1160\u3164\uffa0]/gu,
+    c => `<span class="hidden-char">U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}</span>`);
+}
+
+/** One argument of a held call, whole: short values inline, the rest as a block. */
+function argValue(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return text.includes('\n') || text.length > 120 ? `<pre>${visible(text)}</pre>` : visible(text);
+}
+
+/** Every argument of a held call, in full: the owner approves exactly what runs. */
+function argList(args) {
+  const entries = Object.entries(args ?? {});
+  if (!entries.length) return '<p class="quiet">No arguments.</p>';
+  return `<dl class="args">${entries.map(([k, v]) => `<div><dt>${visible(k)}</dt><dd>${argValue(v)}</dd></div>`).join('')}</dl>`;
+}
+
+/** Gateways that could not be asked. */
+function unreachableNote(unreachable) {
+  return unreachable.map(u => `<p class="down">Could not ask ${esc(u.title)}: ${esc(u.error)}.</p>`).join('');
+}
+
+/** Calls the gateways hold for the owner, each with Approve and Reject. */
+export function needsYou({ items, unreachable }, timeZone) {
+  if (!items.length && !unreachable.length) return '';
+  const cards = items.map(r => `<li class="request">
+  <p class="ask"><span class="gw">${esc(r.gatewayTitle)}</span> wants to <strong>${esc(toolWords(r.tool, r.gateway))}</strong> <code class="tool">${visible(r.tool)}</code></p>
+  ${argList(r.arguments)}
+  <p class="asked">Asked ${esc(when(r.requestedAt, timeZone))}</p>
+  <div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div>
+  <p class="outcome" role="status"></p>
+</li>`).join('\n');
+  return `<section class="needs" id="needs" aria-labelledby="needs-title">
+${items.length ? `<h2 id="needs-title">Needs you</h2><ul class="requests">\n${cards}\n</ul>` : '<h2 id="needs-title" class="visually-hidden">Gateways</h2>'}
+${unreachableNote(unreachable)}
+</section>`;
+}
+
+/** Every held call the gateways remember, decided or not. */
+export function approvalsPage({ items, unreachable }, configured, timeZone) {
+  if (!configured) {
+    return `<section class="empty"><h1>No gateways yet</h1>
+<p>A gateway serves one MCP server to the agents and holds the calls that need your approval. Set <code>GATEWAYS</code> to list them, as the README describes.</p></section>`;
+  }
+  const rows = items.slice(0, 100).map(r => `<li class="${r.status === 'pending' ? 'request' : 'decided'}">
+  <p class="ask"><span class="gw">${esc(r.gatewayTitle)}</span> <strong>${esc(toolWords(r.tool, r.gateway))}</strong> <code class="tool">${visible(r.tool)}</code> <span class="status ${esc(REQUEST_CLASS[r.status] ?? 'none')}">${esc(REQUEST_WORDS[r.status] ?? r.status)}</span></p>
+  <p class="asked">Asked ${esc(when(r.requestedAt, timeZone))}${r.decidedAt ? `, decided ${esc(when(r.decidedAt, timeZone))}` : ''}</p>
+  <details><summary>What it asked for${r.result ? ' and what came back' : ''}</summary>${argList(r.arguments)}${r.result ? `<pre class="result">${esc(r.result)}</pre>` : ''}</details>
+  ${r.status === 'pending' ? `<div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div><p class="outcome" role="status"></p>` : ''}
+</li>`).join('\n');
+  return `<section class="approvals">
+<h1>Approvals</h1>
+<p class="lede">What the agents asked to do that waits for you, or waited: sending, deleting, anything with money.</p>
+${unreachableNote(unreachable)}
+${items.length ? `<ul class="history">\n${rows}\n</ul>` : '<p class="quiet">Nothing asked yet.</p>'}
+</section>`;
+}
+
 /** The dashboard. */
-export function dashboard({ items, week, timeZone }) {
+export function dashboard({ items, week, timeZone, needs = { items: [], unreachable: [] } }) {
   if (!items.length) {
-    return `<section class="empty"><h1>No chores yet</h1>
+    return `${needsYou(needs, timeZone)}<section class="empty"><h1>No chores yet</h1>
 <p>A chore is a goose recipe plus a CronJob that runs <code>aemtli run &lt;recipe&gt;</code>. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p></section>`;
   }
-  return `${weekChart(week, items, timeZone)}
+  return `${needsYou(needs, timeZone)}
+${weekChart(week, items, timeZone)}
 ${comingUp(items, timeZone)}`;
 }
 
@@ -178,7 +248,7 @@ ${run.error ? `<div class="error" role="alert"><h2>What went wrong</h2><p>${esc(
 }
 
 /** The chat page; public/chat.js does the talking. `cwd` is goose's working directory. */
-export function chatPage(cwd) {
+export function chatPage(cwd, mcpServers = []) {
   return `<section class="chat-page">
 <div class="chat-bar">
   <h1>Chat with goose</h1>
@@ -193,7 +263,7 @@ export function chatPage(cwd) {
   <button id="new" class="quiet-button">New conversation</button>
 </div>
 <p id="state" class="state" role="status">Connecting…</p>
-<div id="log" class="chat" aria-live="polite" data-cwd="${esc(cwd)}"></div>
+<div id="log" class="chat" aria-live="polite" data-cwd="${esc(cwd)}" data-mcp="${esc(JSON.stringify(mcpServers))}"></div>
 <form id="form" class="composer">
   <label class="visually-hidden" for="input">Message</label>
   <textarea id="input" rows="3" placeholder="Ask goose something. Cmd+Enter sends." required></textarea>
