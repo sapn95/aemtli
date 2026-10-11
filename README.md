@@ -74,6 +74,10 @@ export default async function (ctx) {
 - `ctx.mcp('<gateway>')` is an MCP client for a gateway named in
   `MCP_GATEWAYS`, with `tools()`, `call(name, args)` and `json(name, args)`.
   Approvals apply as they do for agents.
+- `ctx.notify({ title, message })` sends one push through ntfy, for a run
+  worth a look on a phone. It needs `NTFY_URL`, `NTFY_TOPIC` and
+  `NTFY_TOKEN_FILE` in the run's pod; without them it says so in the log and
+  returns false, and a refused push never fails the run.
 - `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
   new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
 
@@ -199,8 +203,10 @@ credentials.
 (`/secrets/model/key`), `MODEL_ALLOW_PATHS` (`/v1/`).
 
 `aemtli job`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER`, `AEMTLI_KEEP_RUNS`,
-`MCP_GATEWAYS` (JSON: `{"epost":"http://aemtli-mcp-epost:8080/mcp"}`), and
-`ANTHROPIC_HOST` with a placeholder `ANTHROPIC_API_KEY` for the proxy.
+`MCP_GATEWAYS` (JSON: `{"epost":"http://aemtli-mcp-epost:8080/mcp"}`),
+`ANTHROPIC_HOST` with a placeholder `ANTHROPIC_API_KEY` for the proxy, and
+for `ctx.notify` the same `NTFY_URL`, `NTFY_TOPIC` and `NTFY_TOKEN_FILE` the
+UI uses, plus `PUBLIC_ORIGIN` for the link a push carries.
 
 `aemtli run`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER` (`schedule` or
 `manual`), `AEMTLI_MAX_TURNS` (goose's own default is 1000), `AEMTLI_KEEP_RUNS`
