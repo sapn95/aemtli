@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { runRecipe } from '../src/run/runner.mjs';
+import { runJob } from '../src/run/job.mjs';
 import { startServer } from '../src/web/server.mjs';
 import { createK8s } from '../src/web/k8s.mjs';
 import { createAccessVerifier } from '../src/web/auth.mjs';
@@ -31,6 +32,7 @@ function required(name) {
 const USAGE = `ämtli ${version}
 
   aemtli run <recipe> [--param key=value]...   run one recipe with goose, record the result
+  aemtli job <name> [--param key=value]...     run one job (code, the model only where needed)
   aemtli web                                   serve the dashboard and the chat
   aemtli model-proxy                           put the model key on requests goose makes
   aemtli mcp-gateway                           serve one MCP server to the agents, holding calls for approval
@@ -167,6 +169,37 @@ async function modelProxy() {
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)));
 }
 
+/** `aemtli job`: one job, exit 0 if it succeeded. */
+async function job(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { param: { type: 'string', multiple: true } } });
+  if (positionals.length !== 1) {
+    console.error('usage: aemtli job <name> [--param key=value]...');
+    process.exit(2);
+  }
+  let gateways;
+  try {
+    gateways = JSON.parse(env.MCP_GATEWAYS ?? '{}');
+  } catch {
+    console.error('MCP_GATEWAYS must be JSON: {"epost":"http://aemtli-mcp-epost:8080/mcp"}');
+    process.exit(2);
+  }
+  const params = Object.fromEntries((values.param ?? []).map(p => {
+    const at = p.indexOf('=');
+    return at < 0 ? [p, ''] : [p.slice(0, at), p.slice(at + 1)];
+  }));
+  const record = await runJob({
+    name: positionals[0],
+    recipesDir: env.RECIPES_DIR ?? '/recipes',
+    dataDir: env.DATA_DIR ?? '/data',
+    trigger: env.AEMTLI_TRIGGER === 'schedule' ? 'schedule' : 'manual',
+    keep: env.AEMTLI_KEEP_RUNS ? Number(env.AEMTLI_KEEP_RUNS) : 50,
+    params,
+    gateways,
+  });
+  log(`${record.recipe} ${record.id}: ${record.status}${record.error ? ` (${record.error})` : ''}, ${record.tokens.total} tokens`);
+  process.exit(record.status === 'succeeded' ? 0 : 1);
+}
+
 /** `aemtli mcp-gateway`: one MCP server, its credentials, and the approval gate. */
 async function mcpGateway() {
   let started;
@@ -187,6 +220,7 @@ async function mcpGateway() {
 
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
+else if (command === 'job') await job(rest);
 else if (command === 'web') await web();
 else if (command === 'model-proxy') await modelProxy();
 else if (command === 'mcp-gateway') await mcpGateway();

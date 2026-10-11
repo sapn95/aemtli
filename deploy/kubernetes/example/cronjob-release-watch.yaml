@@ -1,4 +1,5 @@
-# Every Monday at 07:17, a digest of last week's releases.
+# Every Monday at 07:17, a digest of last week's releases. A job: code reads
+# the feeds, the model only sums up releases it has not seen.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -45,17 +46,13 @@ spec:
           containers:
             - name: run
               image: ghcr.io/sapn95/aemtli
-              args: ["aemtli", "run", "release-watch"]
+              args: ["aemtli", "job", "release-watch"]
+              # ANTHROPIC_HOST and the placeholder key: the job asks the
+              # model through the proxy, like goose does.
               envFrom:
                 - configMapRef:
                     name: aemtli-goose-env
               env:
-                # Nobody is there to approve a tool call.
-                - name: GOOSE_MODE
-                  value: auto
-                # goose's default is a thousand turns.
-                - name: AEMTLI_MAX_TURNS
-                  value: "40"
                 # "schedule", or "manual" when the UI started the Job.
                 - name: AEMTLI_TRIGGER
                   valueFrom:
