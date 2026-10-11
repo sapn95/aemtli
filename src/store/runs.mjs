@@ -126,6 +126,8 @@ export function listRuns(dataDir, recipe, limit = 20) {
 
 /** Deletes all but the newest `keep` runs of a recipe; returns how many went. */
 export function pruneRuns(dataDir, recipe, keep) {
+  // slice(NaN) is everything: a bad count must never delete every run.
+  if (!Number.isInteger(keep) || keep < 1) return 0;
   const old = runIds(dataDir, recipe).slice(keep);
   for (const id of old) rmSync(runDir(dataDir, recipe, id), { recursive: true, force: true });
   return old.length;

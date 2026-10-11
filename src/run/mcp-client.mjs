@@ -10,6 +10,7 @@ function textOf(result) {
 
 export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, clientName = 'aemtli-job' } = {}) {
   let sessionId = null;
+  let opening = null;
   let nextId = 1;
 
   async function post(message) {
@@ -25,37 +26,57 @@ export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, c
     });
     if (res.status === 202) return null;
     const body = await res.json().catch(() => null);
-    if (!res.ok && !body?.error) throw new Error(`${url} answered ${res.status}`);
-    return { body, session: res.headers.get('mcp-session-id') };
+    if (!body) throw new Error(`${url} answered ${res.status} without JSON`);
+    if (!res.ok && !body.error) throw new Error(`${url} answered ${res.status}`);
+    return { body, status: res.status, session: res.headers.get('mcp-session-id') };
   }
 
   async function request(method, params) {
     const answer = await post({ jsonrpc: '2.0', id: nextId++, method, params });
-    if (answer?.body?.error) throw new Error(`${method}: ${answer.body.error.message}`);
+    if (answer?.body?.error) {
+      const err = new Error(`${method}: ${answer.body.error.message}`);
+      err.status = answer.status;
+      throw err;
+    }
     return answer;
   }
 
-  async function open() {
-    if (sessionId) return;
-    const { session } = await request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: clientName, version: '1' } });
-    if (!session) throw new Error(`${url} gave no session`);
-    sessionId = session;
-    await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  /** One session, however many calls ask for it at once. */
+  function open() {
+    if (sessionId) return Promise.resolve();
+    opening ??= (async () => {
+      const { session } = await request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: clientName, version: '1' } });
+      if (!session) throw new Error(`${url} gave no session`);
+      sessionId = session;
+      await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    })().finally(() => { opening = null; });
+    return opening;
+  }
+
+  /** A request in the session; a session the gateway closed is opened again, once. */
+  async function inSession(method, params) {
+    await open();
+    try {
+      return await request(method, params);
+    } catch (err) {
+      if (err.status !== 404) throw err;
+      sessionId = null;
+      await open();
+      return request(method, params);
+    }
   }
 
   return {
     /** The server's tools. */
     async tools() {
-      await open();
-      return (await request('tools/list', {})).body.result.tools;
+      return (await inSession('tools/list', {})).body.result.tools;
     },
     /**
      * Calls a tool. Resolves with { text, isError, result }; a held call is
      * not an error, its text says it waits.
      */
     async call(name, args = {}) {
-      await open();
-      const { result } = (await request('tools/call', { name, arguments: args })).body;
+      const { result } = (await inSession('tools/call', { name, arguments: args })).body;
       return { text: textOf(result), isError: Boolean(result?.isError), result };
     },
     /** Calls a tool whose answer is JSON, and parses it. Throws on an error result. */
@@ -70,8 +91,10 @@ export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, c
     },
     async close() {
       if (!sessionId) return;
-      await fetchImpl(url, { method: 'DELETE', headers: { 'mcp-session-id': sessionId } }).catch(() => {});
+      const id = sessionId;
       sessionId = null;
+      // Best effort: the gateway closes idle sessions itself.
+      await fetchImpl(url, { method: 'DELETE', headers: { 'mcp-session-id': id }, signal: AbortSignal.timeout(5_000) }).catch(() => {});
     },
   };
 }
