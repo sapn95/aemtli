@@ -4,7 +4,7 @@
 // about the recipe itself; goose does the work, this only starts it, waits,
 // and writes down what happened in a shape the dashboard can read.
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readGooseResult } from './result.mjs';
 import { RECIPE_NAME, newRunId, createRunDir, writeJsonAtomic, pruneRuns } from '../store/runs.mjs';
@@ -35,7 +35,11 @@ function runGoose({ goose, args, env, logPath, signal }) {
       else stdout += chunk;
     });
     let logged = 0;
+    let head = '';
     child.stderr.on('data', chunk => {
+      // The first lines are kept to say why a run failed when goose stops
+      // before it prints any JSON.
+      if (head.length < 4096) head += chunk.toString('utf8').slice(0, 4096 - head.length);
       if (logged >= MAX_LOG) return;
       logged += chunk.length;
       log.write(logged > MAX_LOG ? chunk.subarray(0, chunk.length - (logged - MAX_LOG)) : chunk);
@@ -51,7 +55,7 @@ function runGoose({ goose, args, env, logPath, signal }) {
       if (done) return;
       done = true;
       signal?.removeEventListener('abort', stop);
-      log.on('finish', () => resolve({ code, stdout, truncated }));
+      log.on('finish', () => resolve({ code, stdout, truncated, head }));
       log.end(note);
     };
     // A binary that cannot start emits 'error' (and on some versions 'close'
@@ -97,13 +101,25 @@ export async function runRecipe({
   };
   writeJsonAtomic(join(dir, 'run.json'), record);
 
-  const args = ['run', '--recipe', recipePath, '--no-session', '--quiet', '--output-format', 'json'];
+  // goose opens a recipe without following symlinks, and a ConfigMap mount
+  // is nothing but symlinks (hello.yaml -> ..data/hello.yaml -> ...), so it
+  // refuses those with "Too many levels of symbolic links". The run gets its
+  // own copy instead, which also records which version of the recipe ran.
+  const copy = join(dir, 'recipe.yaml');
+  writeFileSync(copy, readFileSync(recipePath));
+  const args = ['run', '--recipe', copy, '--no-session', '--quiet', '--output-format', 'json'];
   if (maxTurns) args.push('--max-turns', String(maxTurns));
   // --name=value, so a value starting with a dash is not read as a flag.
   for (const p of params) args.push(`--params=${p}`);
 
-  const { code, stdout, truncated } = await runGoose({ goose, args, env, logPath: join(dir, 'run.log'), signal });
+  const { code, stdout, truncated, head } = await runGoose({ goose, args, env, logPath: join(dir, 'run.log'), signal });
   const result = readGooseResult(stdout);
+  // With no JSON there is no answer to quote, but goose usually said why on
+  // stderr or stdout: "Error: ..." is the line worth showing.
+  if (!result.ok && !result.text) {
+    const said = `${head}\n${stdout}`.split('\n').map(l => l.trim()).find(l => /^error\b/i.test(l));
+    if (said) result.error = said;
+  }
   const finished = now();
 
   let status = result.ok && code === 0 ? 'succeeded' : 'failed';

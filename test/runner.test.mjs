@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runRecipe } from '../src/run/runner.mjs';
@@ -31,7 +31,8 @@ test('a successful run records its answer, tokens and model', async () => {
   assert.equal(listRuns(s.dataDir, 'hello')[0].status, 'succeeded');
   assert.match(readRunFile(s.dataDir, 'hello', r.id, 'result.md'), /Fake-Modell/);
   const [args] = s.args();
-  assert.deepEqual(args.slice(0, 3), ['run', '--recipe', join(s.recipesDir, 'hello.yaml')]);
+  assert.deepEqual(args.slice(0, 3), ['run', '--recipe', join(s.dataDir, 'runs', 'hello', r.id, 'recipe.yaml')]);
+  assert.equal(readFileSync(join(s.dataDir, 'runs', 'hello', r.id, 'recipe.yaml'), 'utf8'), 'title: Hello\nprompt: hi\n');
   for (const flag of ['--no-session', '--quiet', '--output-format', 'json', '--max-turns', '7', '--params=who=world']) assert.ok(args.includes(flag), flag);
 });
 
@@ -48,7 +49,7 @@ test('a crash keeps the exit code and the log', async () => {
   const r = await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: s.env });
   assert.equal(r.status, 'failed');
   assert.equal(r.exitCode, 3);
-  assert.match(r.error, /exited with 3/);
+  assert.match(r.error, /exited with 3: Error: something specific broke/);
   assert.match(readRunFile(s.dataDir, 'hello', r.id, 'run.log'), /panicked/);
 });
 
@@ -89,4 +90,22 @@ test('old runs are pruned down to "keep"', async () => {
   const s = setup('success');
   for (let i = 0; i < 3; i++) await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: s.env, keep: 2 });
   assert.equal(listRuns(s.dataDir, 'hello', 10).length, 2);
+});
+
+test('a recipe mounted from a ConfigMap (a chain of symlinks) runs from its copy', async () => {
+  const s = setup('success');
+  // What the kubelet makes of a ConfigMap: the file is a link into ..data.
+  const recipes = join(s.root, 'cm');
+  mkdirSync(join(recipes, '..2026_10_11'), { recursive: true });
+  writeFileSync(join(recipes, '..2026_10_11', 'hello.yaml'), 'title: Hello\nprompt: hi\n');
+  symlinkSync('..2026_10_11', join(recipes, '..data'));
+  symlinkSync('..data/hello.yaml', join(recipes, 'hello.yaml'));
+  const r = await runRecipe({ recipe: 'hello', recipesDir: recipes, dataDir: s.dataDir, goose: FAKE, env: s.env });
+  assert.equal(r.status, 'succeeded', r.error);
+});
+
+test('when goose stops before any JSON, its own error line is the reason', async () => {
+  const s = setup('success');
+  const r = await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: { ...s.env, FAKE_GOOSE_MODE: 'crash' } });
+  assert.match(r.error, /something specific broke/);
 });
