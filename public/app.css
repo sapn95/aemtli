@@ -131,6 +131,41 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem; }
 .more { color: var(--pencil); }
 .many .word { color: var(--pencil); }
 
+/* ---- needs you -------------------------------------------------------- */
+
+/* The one thing on the page that waits for a person: amber, like the
+   permission prompt in the chat. */
+.needs { margin: 1rem 0 2.5rem; }
+.needs h2 { margin-top: 0.5rem; }
+.requests, .history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.request {
+  border: 1.5px solid var(--amber); border-left-width: 5px; border-radius: 6px;
+  background: var(--sheet); padding: 0.85rem 1rem;
+}
+.history .decided { border-top: 1px solid var(--rule); padding: 0.75rem 0; }
+.ask { margin: 0; font-size: 1.0625rem; }
+.ask .gw { font-weight: 700; }
+.ask .status { margin-left: 0.4rem; font-size: 0.875rem; }
+.asked { margin: 0.35rem 0 0; color: var(--pencil); font-size: 0.875rem; }
+.ask .tool { font: 0.8125rem ui-monospace, "SF Mono", Menlo, monospace; color: var(--pencil); margin-left: 0.3rem; }
+.hidden-char { color: var(--redpen); border: 1px solid currentColor; border-radius: 3px; padding: 0 0.2rem; font-size: 0.75em; }
+.args { margin: 0.6rem 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 1rem; }
+.args div { display: contents; }
+.args dt { color: var(--pencil); }
+.args dd { margin: 0; overflow-wrap: anywhere; }
+.args pre, .result {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto;
+  font: 0.8125rem/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 0.5rem 0.65rem;
+}
+.result { margin-top: 0.6rem; }
+.decide { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
+.outcome { margin: 0.5rem 0 0; min-height: 1.2rem; overflow-wrap: anywhere; }
+.request.decided { border-color: var(--rule); }
+.down { color: var(--redpen); margin: 0.5rem 0 0; }
+.history details { margin-top: 0.4rem; }
+.history summary { cursor: pointer; color: var(--pencil); font-size: 0.875rem; }
+
 /* ---- coming up ---------------------------------------------------------- */
 
 .chores { list-style: none; margin: 0; padding: 0; }
@@ -270,6 +305,8 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
   .runs .took, .runs .trigger { display: none; }
   .composer { flex-direction: column; align-items: stretch; }
   .composer-actions { flex-direction: row; }
+  .args { grid-template-columns: minmax(0, 1fr); }
+  .args dt { margin-top: 0.3rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

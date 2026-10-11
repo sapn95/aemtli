@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { nextRun, describeCron, runsBetween, weekOf } from './cron.mjs';
 import { renderMarkdown } from './markdown.mjs';
+import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
-import { layout, dashboard, recipePage, runPage, chatPage } from './pages.mjs';
+import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const STATIC = {
@@ -56,7 +57,8 @@ function recipeMeta(recipesDir, name) {
  * chat sessions), timeZone (for showing times), log, now.
  */
 export function createApp(deps) {
-  const { k8s, dataDir, recipesDir, verify, proxy, allowedOrigin, version, chatCwd = '/data/workspace', timeZone: displayZone = 'UTC', log = console.log, now = () => new Date() } = deps;
+  const { k8s, dataDir, recipesDir, verify, proxy, allowedOrigin, version, chatCwd = '/data/workspace', timeZone: displayZone = 'UTC', gateways = null, log = console.log, now = () => new Date() } = deps;
+  const NONE = { items: [], unreachable: [] };
 
   /** Resolves with the user's email, or null when the request may not pass. */
   async function identify(req) {
@@ -158,12 +160,14 @@ export function createApp(deps) {
    * token: the browser sets Sec-Fetch-Site and Origin itself, and another
    * site's form cannot fake either.
    */
-  async function runNow(req, res, name) {
+  function sameOrigin(req) {
     const site = req.headers['sec-fetch-site'];
-    const origin = req.headers.origin;
-    if ((site && site !== 'same-origin') || (allowedOrigin && origin !== allowedOrigin)) {
-      return send(res, 403, 'application/json', JSON.stringify({ error: 'cross-site request refused' }));
-    }
+    return !((site && site !== 'same-origin') || (allowedOrigin && req.headers.origin !== allowedOrigin));
+  }
+  const crossSite = res => send(res, 403, 'application/json', JSON.stringify({ error: 'cross-site request refused' }));
+
+  async function runNow(req, res, name) {
+    if (!sameOrigin(req)) return crossSite(res);
     const item = (await collect()).find(i => i.name === name);
     if (!item) return send(res, 404, 'application/json', JSON.stringify({ error: 'no such recipe' }));
     if (item.running) return send(res, 409, 'application/json', JSON.stringify({ error: 'already running' }));
@@ -184,9 +188,28 @@ export function createApp(deps) {
     if (req.method === 'GET' && path === '/') {
       const items = await collect();
       const week = { days: weekOf(now(), displayZone) };
-      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone }));
+      const needs = gateways?.configured ? await gateways.pending() : NONE;
+      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, needs }));
     }
-    if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(chatCwd), 'chat.js', 'chat');
+    if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(chatCwd, gateways?.mcpServers ?? []), 'chat.js', 'chat');
+    if (req.method === 'GET' && path === '/approvals') {
+      const all = gateways?.configured ? await gateways.all() : NONE;
+      return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone), 'app.js', 'approvals');
+    }
+    const decision = path.match(/^\/api\/approvals\/([a-z0-9-]+)\/([^/]+)\/(approve|reject)$/);
+    if (req.method === 'POST' && decision && APPROVAL_ID.test(decision[2])) {
+      if (!sameOrigin(req)) return crossSite(res);
+      if (!gateways?.configured) return send(res, 404, 'application/json', JSON.stringify({ error: 'no gateways' }));
+      const [, name, id, verb] = decision;
+      log(`${user} ${verb === 'approve' ? 'approves' : 'rejects'} ${name}/${id}`);
+      try {
+        const { status, body } = await gateways.decide(name, id, verb);
+        return send(res, status, 'application/json', JSON.stringify(body));
+      } catch (err) {
+        log(`gateway ${name}: ${err.message}`);
+        return send(res, 502, 'application/json', JSON.stringify({ error: 'the gateway did not answer' }));
+      }
+    }
 
     const recipe = path.match(/^\/recipes\/([^/]+)$/);
     if (req.method === 'GET' && recipe && RECIPE_NAME.test(recipe[1])) {

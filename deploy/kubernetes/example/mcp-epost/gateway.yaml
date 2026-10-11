@@ -1,0 +1,162 @@
+# The epost gateway: epost-mcp, its ePost login, and the approval gate. The
+# server is installed from the pinned lockfile at start, into an emptyDir;
+# nothing else in the pod can write.
+#
+# The gate stands between the agents and the server, not between the server
+# and its account: epost-mcp runs as the same user as the gateway and could
+# read the approvals token, but it holds the ePost login anyway. Trusting the
+# server is trusting its lockfile, which is why it is pinned and reviewed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aemtli-mcp-epost
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aemtli-mcp-epost
+  labels:
+    app.kubernetes.io/name: aemtli-mcp-epost
+spec:
+  replicas: 1
+  # The held calls live on a ReadWriteOnce volume: one pod at a time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-mcp-epost
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aemtli-mcp-epost
+        aemtli.sapn.ch/role: mcp-gateway
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: install
+          image: ghcr.io/sapn95/aemtli
+          command: ["sh", "-c", "cp /src/package.json /src/package-lock.json /opt/mcp/ && cd /opt/mcp && npm ci --ignore-scripts --omit=dev --no-audit --no-fund"]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: npm_config_cache
+              value: /tmp/.npm
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+            - name: mcp
+              mountPath: /opt/mcp
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: gateway
+          image: ghcr.io/sapn95/aemtli
+          args: ["aemtli", "mcp-gateway"]
+          ports:
+            - name: mcp
+              containerPort: 8080
+            - name: approvals
+              containerPort: 8081
+          envFrom:
+            # EPOST_SWISSID_USER and EPOST_API_PASSWORD, for epost-mcp only.
+            - secretRef:
+                name: aemtli-mcp-epost
+          env:
+            - name: MCP_COMMAND
+              value: '["node", "/opt/mcp/node_modules/epost-mcp/index.js"]'
+            - name: POLICY_FILE
+              value: /src/policy.yaml
+            - name: ADMIN_TOKEN_FILE
+              value: /secrets/token/token
+            - name: STATE_DIR
+              value: /state
+            # The documented REST API only; the browser path needs a person.
+            - name: EPOST_TRANSPORT
+              value: api
+            # Set, so epost-mcp does not look for a macOS keychain.
+            - name: EPOST_API_KEY
+              value: ""
+            - name: HOME
+              value: /tmp
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: mcp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 384Mi
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+            - name: mcp
+              mountPath: /opt/mcp
+              readOnly: true
+            - name: token
+              mountPath: /secrets/token
+              readOnly: true
+            - name: state
+              mountPath: /state
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: src
+          configMap:
+            name: aemtli-mcp-epost
+        - name: mcp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: token
+          secret:
+            secretName: aemtli-gateway-tokens
+            defaultMode: 0440
+            items:
+              - key: epost
+                path: token
+        - name: state
+          persistentVolumeClaim:
+            claimName: aemtli-mcp-epost
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aemtli-mcp-epost
+spec:
+  selector:
+    app.kubernetes.io/name: aemtli-mcp-epost
+  ports:
+    - name: mcp
+      port: 8080
+      targetPort: mcp
+    - name: approvals
+      port: 8081
+      targetPort: approvals

@@ -1,0 +1,8 @@
+{
+  "name": "aemtli-mcp-epost",
+  "private": true,
+  "description": "The MCP server the epost gateway runs, pinned with its lockfile.",
+  "dependencies": {
+    "epost-mcp": "0.12.0"
+  }
+}

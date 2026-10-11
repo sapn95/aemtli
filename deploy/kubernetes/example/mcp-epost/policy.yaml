@@ -1,0 +1,24 @@
+# The epost gateway: reading and filing run on their own, deleting waits for
+# the owner. Denied: what needs a browser, which a gateway pod does not have
+# (epost_login, epost_status), and downloads, which would land in the
+# gateway's own /tmp where no agent can read them.
+default: approve
+allow:
+  - epost_settings
+  - epost_unread_count
+  - epost_list_*
+  - epost_get_letter
+  - epost_search
+  - epost_read_storage_document
+  - epost_set_read_status
+  - epost_store_letter
+  - epost_create_folder
+  - epost_move_to_folder
+  - epost_unfile_from_folder
+  - epost_restore_letter
+approve:
+  - epost_delete_letter
+deny:
+  - epost_login
+  - epost_status
+  - epost_download_*

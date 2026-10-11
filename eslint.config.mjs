@@ -11,7 +11,7 @@ export default [
         process: 'readonly', console: 'readonly', Buffer: 'readonly',
         fetch: 'readonly', URL: 'readonly', URLSearchParams: 'readonly',
         setTimeout: 'readonly', clearTimeout: 'readonly', structuredClone: 'readonly',
-        AbortController: 'readonly', AbortSignal: 'readonly', WebSocket: 'readonly', Intl: 'readonly', setInterval: 'readonly',
+        AbortController: 'readonly', AbortSignal: 'readonly', WebSocket: 'readonly', Intl: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
       },
     },
     rules: {

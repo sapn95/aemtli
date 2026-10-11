@@ -8,6 +8,8 @@ import { createK8s } from '../src/web/k8s.mjs';
 import { createAccessVerifier } from '../src/web/auth.mjs';
 import { createAcpProxy } from '../src/web/acp-proxy.mjs';
 import { startModelProxy } from '../src/proxy/model-proxy.mjs';
+import { startGateway } from '../src/gateway/server.mjs';
+import { parseGateways, createGatewayClient, createNotifier } from '../src/web/approvals.mjs';
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const env = process.env;
@@ -31,6 +33,7 @@ const USAGE = `ämtli ${version}
   aemtli run <recipe> [--param key=value]...   run one recipe with goose, record the result
   aemtli web                                   serve the dashboard and the chat
   aemtli model-proxy                           put the model key on requests goose makes
+  aemtli mcp-gateway                           serve one MCP server to the agents, holding calls for approval
 
 Settings come from the environment; see the README.`;
 
@@ -113,12 +116,33 @@ async function web() {
     secret,
     allowedOrigin: publicOrigin,
   }) : null;
+  let gateways;
+  try {
+    gateways = createGatewayClient({ gateways: parseGateways(env.GATEWAYS, env.GATEWAY_TOKENS_DIR) });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  if (env.NTFY_URL) {
+    if (!gateways.configured) log('NTFY_URL is set but there are no GATEWAYS to watch');
+    const ntfy = new URL(env.NTFY_URL);
+    createNotifier({
+      client: gateways,
+      ntfyUrl: ntfy.origin + ntfy.pathname.replace(/\/$/, ''),
+      topic: required('NTFY_TOPIC'),
+      token: readFileSync(required('NTFY_TOKEN_FILE'), 'utf8').trim(),
+      stateFile: env.NOTIFY_STATE_FILE ?? `${env.DATA_DIR ?? '/data'}/notified.json`,
+      clickUrl: publicOrigin ? `${publicOrigin}/#needs` : undefined,
+      log,
+    }).start();
+  }
   const server = await startServer({
     k8s: createK8s(env.K8S_BASE_URL ? { baseUrl: env.K8S_BASE_URL, namespace: env.K8S_NAMESPACE, token: env.K8S_TOKEN } : undefined),
     dataDir: env.DATA_DIR ?? '/data',
     recipesDir: env.RECIPES_DIR ?? '/recipes',
     chatCwd: env.CHAT_CWD ?? '/data/workspace',
     timeZone,
+    gateways,
     allowedOrigin: publicOrigin,
     verify,
     proxy,
@@ -143,10 +167,29 @@ async function modelProxy() {
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)));
 }
 
+/** `aemtli mcp-gateway`: one MCP server, its credentials, and the approval gate. */
+async function mcpGateway() {
+  let started;
+  try {
+    started = await startGateway(env, { version, log });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, async () => {
+      await started.gateway.close();
+      for (const server of started.servers) server.close();
+      setTimeout(() => process.exit(0), 3000).unref();
+    });
+  }
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'web') await web();
 else if (command === 'model-proxy') await modelProxy();
+else if (command === 'mcp-gateway') await mcpGateway();
 else {
   console.log(USAGE);
   process.exit(command === '--help' || command === undefined ? 0 : 2);

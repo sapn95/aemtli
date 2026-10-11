@@ -17,6 +17,10 @@ const SECRETS = [
   [/github_pat_[A-Za-z0-9_]{20,}/, 'fine-grained GitHub token'],
   [/\bnpm_[A-Za-z0-9]{36}\b/, 'npm token'],
   [/"?access_token"?\s*[:=]\s*["'][A-Za-z0-9._-]{20,}/, 'hardcoded access token'],
+  // A lockfile made on a machine with a company registry in its ~/.npmrc names
+  // that registry in every "resolved" URL: an internal host in a public repo,
+  // and an install that fails anywhere outside that network.
+  [/"resolved":\s*"https?:\/\/(?!registry\.npmjs\.org\/)[^"]+"/, 'lockfile resolves from a registry other than npmjs.org'],
 ];
 
 // Addresses that may legitimately appear: the ones that identify nobody. The
