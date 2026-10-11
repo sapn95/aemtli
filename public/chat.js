@@ -49,8 +49,16 @@ function answer(id, result) {
 function busy(on) {
   send.disabled = on;
   cancel.disabled = !on;
-  state.textContent = on ? 'goose is working…' : 'ready';
+  state.textContent = on ? 'goose is working…' : 'Ready';
   if (!on) agentBubble = null;
+}
+
+const TOOL_WORDS = { pending: 'waiting', in_progress: 'running', completed: 'done', failed: 'failed' };
+
+/** "Read file (done)": a tool call's title and how far it got. */
+function toolLine(title, status) {
+  const word = TOOL_WORDS[status] ?? status;
+  return word ? `${title} (${word})` : title;
 }
 
 /** Renders one session/update notification. */
@@ -64,7 +72,7 @@ function onUpdate(update) {
       }
       break;
     case 'tool_call': {
-      const el = add('tool', `${update.title ?? 'tool'} · ${update.status ?? 'pending'}`);
+      const el = add('tool', toolLine(update.title ?? 'tool', update.status ?? 'pending'));
       tools.set(update.toolCallId, { el, title: update.title ?? 'tool' });
       // The next text belongs below the tool line, not above it.
       agentBubble = null;
@@ -74,7 +82,7 @@ function onUpdate(update) {
       const t = tools.get(update.toolCallId);
       if (t) {
         if (update.title) t.title = update.title;
-        t.el.textContent = `${t.title} · ${update.status ?? ''}`;
+        t.el.textContent = toolLine(t.title, update.status);
         t.el.dataset.status = update.status ?? '';
       }
       break;
@@ -102,7 +110,10 @@ function onPermission(id, params) {
     b.addEventListener('click', () => {
       answer(id, { outcome: { outcome: 'selected', optionId: option.optionId } });
       row.remove();
-      box.append(document.createTextNode(` → ${label}`));
+      const said = document.createElement('p');
+      said.className = 'answered';
+      said.textContent = `You chose: ${label}`;
+      box.append(said);
     });
     row.append(b);
   }
@@ -140,7 +151,7 @@ function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/acp`);
   ws.addEventListener('message', onMessage);
   ws.addEventListener('close', () => {
-    state.textContent = 'disconnected; reload the page to reconnect';
+    state.textContent = 'Disconnected. Reload the page to reconnect.';
     send.disabled = true;
     cancel.disabled = true;
   });
@@ -153,7 +164,7 @@ function connect() {
       });
       await newSession();
     } catch (err) {
-      state.textContent = `could not start a session: ${err.message}`;
+      state.textContent = `Could not start a conversation: ${err.message}`;
     }
   });
 }

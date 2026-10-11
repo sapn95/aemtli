@@ -94,6 +94,14 @@ async function web() {
     console.error('K8S_BASE_URL needs K8S_NAMESPACE and K8S_TOKEN as well');
     process.exit(2);
   }
+  // A misspelt zone would turn every dashboard request into a 500.
+  const timeZone = env.DISPLAY_TIME_ZONE || 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone });
+  } catch {
+    console.error('DISPLAY_TIME_ZONE must be an IANA zone such as Europe/Zurich');
+    process.exit(2);
+  }
   const verify = authMode === 'none' ? null : createAccessVerifier({
     teamDomain: required('CF_ACCESS_TEAM_DOMAIN') && teamDomain,
     audience: required('CF_ACCESS_AUD'),
@@ -110,6 +118,7 @@ async function web() {
     dataDir: env.DATA_DIR ?? '/data',
     recipesDir: env.RECIPES_DIR ?? '/recipes',
     chatCwd: env.CHAT_CWD ?? '/data/workspace',
+    timeZone,
     allowedOrigin: publicOrigin,
     verify,
     proxy,

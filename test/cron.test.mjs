@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCron, nextRun } from '../src/web/cron.mjs';
+import { parseCron, nextRun, describeCron, runsBetween, weekOf, wallClock } from '../src/web/cron.mjs';
 
 const at = iso => new Date(iso);
 
@@ -51,7 +51,72 @@ test('a day skip over the spring-forward night does not miss 00:30 the day after
   assert.equal(nextRun('30 0 * * 1', at('2026-03-28T23:00:00Z'), 'Europe/Zurich').toISOString(), '2026-03-29T22:30:00.000Z');
 });
 
-test('a day field starting with * counts as unrestricted, like Vixie cron', () => {
-  // */1 for day of month: only the weekday restricts, so the next Friday.
-  assert.equal(nextRun('0 9 */1 * 5', at('2026-10-11T00:00:00Z')).toISOString(), '2026-10-16T09:00:00.000Z');
+test('the day fields combine as in robfig/cron, which the CronJob controller uses', () => {
+  const from = at('2026-10-11T12:00:00Z'); // a Sunday
+  const next = expression => nextRun(expression, from).toISOString().slice(0, 10);
+  // A star ("*", "?", "*/1") on either side: a day must match both.
+  assert.equal(next('0 9 */1 * 5'), '2026-10-16', 'Fridays only');
+  assert.equal(next('0 9 ? * 5'), '2026-10-16');
+  assert.equal(next('0 6 */2 * *'), '2026-10-13', 'odd days only, not every day');
+  assert.equal(next('0 6 * * */2'), '2026-10-13', 'Sun, Tue, Thu, Sat');
+  // No star: either is enough.
+  assert.equal(next('0 6 */2 * 1'), '2026-10-12', 'a Monday, though an even day');
+  assert.equal(next('0 6 20 * 1'), '2026-10-12');
+});
+
+test('a schedule reads as words, and as itself when there are none for it', () => {
+  const cases = {
+    '13 8 * * 1': 'Mondays at 08:13',
+    '13 8 * * *': 'Every day at 08:13',
+    '0 7 * * 1-5': 'Weekdays at 07:00',
+    '0 9 * * 6,0': 'Weekends at 09:00',
+    '0 7,19 * * 2,4': 'Tuesdays and Thursdays at 07:00 and 19:00',
+    '*/15 * * * *': 'Every 15 minutes',
+    '5 * * * *': 'Every hour at :05',
+    '0 6 1 * *': 'On the 1st of each month at 06:00',
+    '30 6 2,23 * *': 'On the 2nd and 23rd of each month at 06:30',
+    '@daily': 'Every day at 00:00',
+    '0 19,7 * * *': 'Every day at 07:00 and 19:00',
+    '0 6 * * */2': 'Sundays, Tuesdays, Thursdays and Saturdays at 06:00',
+    '0 6 ? * 1': 'Mondays at 06:00',
+    '0 6 1,15 * *': 'On the 1st and 15th of each month at 06:00',
+    '0 6 1-31 * 1': 'Every day at 06:00',
+    // No good words for these: say what it is rather than something wrong.
+    '0 6 1 1 *': '0 6 1 1 *',
+    '7,8 * * * *': '7,8 * * * *',
+    '0 6 1 * 1': '0 6 1 * 1',
+    '0 6 */2 * *': '0 6 */2 * *',
+    '*/15 * */2 * *': '*/15 * */2 * *',
+    '0 6 31 * *': '0 6 31 * *',
+    '0 6 28,29 * *': '0 6 28,29 * *',
+    'nonsense': 'nonsense',
+  };
+  for (const [expression, words] of Object.entries(cases)) assert.equal(describeCron(expression), words, expression);
+});
+
+test('runs in a window include its start and stop before its end', () => {
+  const runs = runsBetween('0 */6 * * *', at('2026-10-11T00:00:00Z'), at('2026-10-12T00:00:00Z'));
+  assert.deepEqual(runs.map(r => r.toISOString().slice(11, 16)), ['00:00', '06:00', '12:00', '18:00']);
+  assert.equal(runsBetween('* * * * *', at('2026-10-11T00:00:00Z'), at('2026-10-12T00:00:00Z'), 'UTC', 5).length, 5, 'capped');
+  assert.deepEqual(runsBetween('0 12 * * *', at('2026-10-11T12:00:30Z'), at('2026-10-12T00:00:00Z')), [], 'a minute already begun is past');
+});
+
+test('the week runs Monday to Sunday in the zone, and the autumn Sunday has 25 hours', () => {
+  const week = weekOf(at('2026-10-25T10:00:00Z'), 'Europe/Zurich');
+  assert.equal(week.length, 7);
+  assert.equal(week[0].start.toISOString(), '2026-10-18T22:00:00.000Z', 'Monday 19 Oct, 00:00 summer time');
+  assert.equal(week[6].start.toISOString(), '2026-10-24T22:00:00.000Z');
+  assert.equal(week[6].end.toISOString(), '2026-10-25T23:00:00.000Z', 'Monday 26 Oct, 00:00 winter time');
+  assert.equal(week[6].end - week[6].start, 25 * 3600_000);
+  assert.deepEqual(week.map(d => d.today), [false, false, false, false, false, false, true]);
+  for (let i = 1; i < 7; i++) assert.equal(week[i].start.getTime(), week[i - 1].end.getTime());
+  // Late Sunday evening UTC is already Monday in Zurich: a new week.
+  assert.equal(weekOf(at('2026-10-11T22:30:00Z'), 'Europe/Zurich')[0].today, true);
+});
+
+test('a wall-clock time in a zone maps to its instant, also on the switch days', () => {
+  assert.equal(wallClock('Europe/Zurich', 2026, 10, 12, 8, 13).toISOString(), '2026-10-12T06:13:00.000Z');
+  assert.equal(wallClock('Europe/Zurich', 2026, 12, 1).toISOString(), '2026-11-30T23:00:00.000Z');
+  assert.equal(wallClock('Europe/Zurich', 2026, 3, 29, 4).toISOString(), '2026-03-29T02:00:00.000Z', 'after spring forward');
+  assert.equal(wallClock('UTC', 2026, 10, 32).toISOString(), '2026-11-01T00:00:00.000Z', 'day 32 rolls over');
 });
