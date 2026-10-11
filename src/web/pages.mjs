@@ -76,63 +76,108 @@ ${script ? `<script type="module" src="/static/${esc(script)}"></script>` : ''}
 </html>`;
 }
 
+/** "in 20 min", "in 3 h", "tomorrow 07:00", "Mon 07:00" for a time ahead. */
+function soon(iso, now, timeZone) {
+  const at = new Date(iso);
+  const minutes = Math.round((at - now) / 60_000);
+  if (minutes < 1) return 'any moment';
+  if (minutes < 60) return `in ${minutes} min`;
+  if (minutes < 10 * 60) return `in ${Math.round(minutes / 60)} h`;
+  const day = fmt(at, timeZone, { weekday: 'short' });
+  const today = fmt(now, timeZone, { weekday: 'short' });
+  const tomorrow = fmt(new Date(now.getTime() + 86_400_000), timeZone, { weekday: 'short' });
+  const prefix = day === today ? 'today' : day === tomorrow ? 'tomorrow' : day;
+  return `${prefix} ${hm(at, timeZone)}`;
+}
+
+const MARKS = { succeeded: '✓', failed: '✗', cancelled: '✗', running: '…' };
+
 /**
- * Up to three marks of one kind, or a count when there are more. `label`
- * says what the mark is for screen readers; the time is what shows.
+ * One day of one chore: the run that happened, or the slot that passed
+ * without one, or the slot still to come. A day with runs links to the last
+ * of them; `n×` says how many when there were several.
  */
-function slots(kind, times, label, timeZone) {
-  if (times.length > 3) return [`<span class="${kind} many">${times.length}× <span class="word">${esc(label.toLowerCase())}</span></span>`];
-  return times.map(at => `<span class="${kind}"><span class="visually-hidden">${esc(label)} at </span>${esc(hm(at, timeZone))}</span>`);
-}
-
-/** One cell of the week chart: what ran, what did not, and what is still due. */
-function weekCell(cell, timeZone) {
+function day(cell, timeZone) {
+  const label = fmt(cell.start, timeZone, { weekday: 'short', day: 'numeric', month: 'short' });
   const marks = [];
-  for (const run of cell.runs.slice(0, 3)) {
-    const sign = { succeeded: '✓', failed: '✗', cancelled: '✗', running: '…' }[run.status] ?? '?';
-    const label = `${STATUS_WORDS[run.status] ?? run.status} at ${hm(new Date(run.startedAt), timeZone)}`;
-    marks.push(`<a class="mark ${esc(run.status)}" href="/recipes/${esc(run.recipe)}/runs/${esc(run.id)}" title="${esc(label)}" aria-label="${esc(label)}">${sign}<span class="t">${esc(hm(new Date(run.startedAt), timeZone))}</span></a>`);
+  const says = [];
+  if (cell.runs.length) {
+    const run = cell.runs.at(-1);
+    const count = cell.runs.length > 1 ? `<span class="count">${cell.runs.length}×</span>` : '';
+    marks.push(`<a class="mark ${esc(run.status)}" href="/recipes/${esc(run.recipe)}/runs/${esc(run.id)}">${MARKS[run.status] ?? '?'}${count}</a>`);
+    says.push(`${cell.runs.length > 1 ? `${cell.runs.length} runs, last ` : ''}${(STATUS_WORDS[run.status] ?? run.status).toLowerCase()} at ${hm(new Date(run.startedAt), timeZone)}`);
   }
-  if (cell.runs.length > 3) marks.push(`<span class="more">+${cell.runs.length - 3} more</span>`);
-  marks.push(...slots('missed', cell.missed, 'Did not run', timeZone), ...slots('due', cell.planned, 'Due', timeZone));
-  return `<td${cell.today ? ' class="today"' : ''}>${marks.join('')}</td>`;
+  // A day can hold both: a slot that passed with nothing in it, and a run
+  // somebody started by hand. Then it shows both marks.
+  if (cell.missed.length) {
+    marks.push('<span class="mark missed" aria-hidden="true"></span>');
+    says.push(`did not run at ${cell.missed.map(at => hm(at, timeZone)).join(', ')}`);
+  }
+  if (cell.planned.length) {
+    marks.push('<span class="mark due" aria-hidden="true"></span>');
+    says.push(`due at ${cell.planned.map(at => hm(at, timeZone)).join(', ')}`);
+  }
+  if (!marks.length) {
+    marks.push('<span class="mark none" aria-hidden="true"></span>');
+    says.push('nothing');
+  }
+  const classes = ['day', cell.today ? 'today' : '', cell.runs.length ? 'ran' : '', cell.missed.length ? 'late' : ''];
+  const title = `${label}: ${says.join(', ')}`;
+  return `<li class="${classes.filter(Boolean).join(' ')}" title="${esc(title)}">
+    <span class="dow" aria-hidden="true">${esc(fmt(cell.start, timeZone, { weekday: 'narrow' }))}</span>
+    <span class="marks">${marks.join('')}</span>
+    <span class="visually-hidden">${esc(title)}</span>
+  </li>`;
 }
 
-/** The Ämtliplan: this week, one row per chore. */
-function weekChart(week, items, timeZone) {
-  const head = week.days.map(d => `<th scope="col"${d.today ? ' class="today" aria-current="date"' : ''}><span class="dow">${esc(fmt(d.start, timeZone, { weekday: 'short' }))}</span><span class="dom">${esc(fmt(d.start, timeZone, { day: 'numeric' }))}</span></th>`).join('');
-  const rows = items.map(it => `<tr>
-  <th scope="row"><a href="/recipes/${esc(it.name)}">${esc(it.title)}</a>${it.suspended ? '<span class="paused">paused</span>' : ''}</th>
-  ${it.week.map(cell => weekCell(cell, timeZone)).join('')}
-</tr>`).join('\n');
+/** The week's days as a heading row, in the column the strips sit in. */
+function weekHead(week, timeZone) {
+  const cells = week.days.map(d => `<li${d.today ? ' class="today"' : ''}><span class="dow">${esc(fmt(d.start, timeZone, { weekday: 'short' }))}</span> <span class="dom">${esc(fmt(d.start, timeZone, { day: 'numeric' }))}</span></li>`).join('');
+  return `<div class="week-head" aria-hidden="true"><ol class="days">${cells}</ol></div>`;
+}
+
+/**
+ * One chore: what it is, when it runs, its week, and what came of the last
+ * run. The same markup carries the week on a phone, where it sits under the
+ * name, and on a wide screen, where the strips line up into the chart.
+ */
+function chore(it, now, timeZone) {
+  const strip = it.week.map(cell => day(cell, timeZone)).join('');
+  const schedule = it.suspended
+    ? `Paused. Normally ${it.scheduleText.replace(/^(Every|On|Weekdays|Weekends)\b/, w => w.toLowerCase())}`
+    : it.scheduleText;
+  const next = it.running
+    ? 'running now'
+    : it.suspended || !it.nextRun ? 'only by hand' : soon(it.nextRun, now, timeZone);
+  const last = it.lastRun
+    ? `<a href="/recipes/${esc(it.name)}/runs/${esc(it.lastRun.id)}">${status(it.lastRun.status)} ${esc(when(it.lastRun.startedAt, timeZone))}</a>`
+    : status(null);
+  return `<li class="chore">
+  <div class="head">
+    <a class="name" href="/recipes/${esc(it.name)}"${it.description ? ` title="${esc(it.description)}"` : ''}>${esc(it.title)}</a>
+    <p class="when" title="${esc(it.schedule)} (${esc(it.timeZone)})">${esc(schedule)}</p>
+  </div>
+  <ol class="strip">${strip}</ol>
+  <div class="meta">
+    <span class="next">${esc(next)}</span>
+    <span class="last">${last}</span>
+  </div>
+  <div class="act"><button class="run quiet-button" data-recipe="${esc(it.name)}"${it.running ? ' disabled' : ''}>Run now</button></div>
+</li>`;
+}
+
+/** The Ämtliplan: every chore with its schedule and this week. */
+function plan(items, week, now, timeZone) {
+  const ordered = [...items].sort((a, b) => (a.nextRun ?? '9999').localeCompare(b.nextRun ?? '9999'));
   const range = `${fmt(week.days[0].start, timeZone, { day: 'numeric', month: 'short' })} to ${fmt(week.days[6].start, timeZone, { day: 'numeric', month: 'short' })}`;
   return `<section class="plan" aria-labelledby="plan-title">
 <div class="plan-head"><h1 id="plan-title">This week</h1><p>${esc(range)}</p></div>
-<div class="grid-wrap"><table class="grid">
-<thead><tr><td></td>${head}</tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table></div>
+${weekHead(week, timeZone)}
+<ul class="chores">
+${ordered.map(it => chore(it, now, timeZone)).join('\n')}
+</ul>
+<p id="notice" class="notice" role="status"></p>
 </section>`;
-}
-
-/** The chores in the order they come up next. */
-function comingUp(items, timeZone) {
-  const ordered = [...items].sort((a, b) => (a.nextRun ?? '9999').localeCompare(b.nextRun ?? '9999'));
-  const rows = ordered.map(it => `<li class="chore">
-  <div class="next">${it.suspended || !it.nextRun ? '<span class="never">Only by hand</span>' : `<span class="day">${esc(fmt(new Date(it.nextRun), timeZone, { weekday: 'short', day: 'numeric', month: 'short' }))}</span><span class="time">${esc(hm(new Date(it.nextRun), timeZone))}</span>`}</div>
-  <div class="what">
-    <a class="name" href="/recipes/${esc(it.name)}">${esc(it.title)}</a>
-    <p class="desc">${esc(it.description)}</p>
-    <p class="sched" title="${esc(it.schedule)} (${esc(it.timeZone)})">${esc(it.suspended ? `Paused. Normally ${it.scheduleText.replace(/^(Every|On|Weekdays|Weekends)\b/, w => w.toLowerCase())}` : it.scheduleText)}</p>
-  </div>
-  <div class="last"><span class="label">Last run</span>${it.running ? status('running') : status(it.lastRun?.status)}${it.lastRun ? `<a href="/recipes/${esc(it.name)}/runs/${esc(it.lastRun.id)}">${esc(when(it.lastRun.startedAt, timeZone))}</a>` : ''}</div>
-  <div class="act"><button class="run quiet-button" data-recipe="${esc(it.name)}"${it.running ? ' disabled' : ''}>Run now</button></div>
-</li>`).join('\n');
-  return `<section aria-labelledby="up-title"><h2 id="up-title">Coming up</h2><ul class="chores">
-${rows}
-</ul><p id="notice" class="notice" role="status"></p></section>`;
 }
 
 const REQUEST_WORDS = { pending: 'Waiting', running: 'Running', done: 'Done', failed: 'Failed', rejected: 'Rejected', expired: 'Expired' };
@@ -203,14 +248,13 @@ ${items.length ? `<ul class="history">\n${rows}\n</ul>` : '<p class="quiet">Noth
 }
 
 /** The dashboard. */
-export function dashboard({ items, week, timeZone, needs = { items: [], unreachable: [] } }) {
+export function dashboard({ items, week, timeZone, now = new Date(), needs = { items: [], unreachable: [] } }) {
   if (!items.length) {
     return `${needsYou(needs, timeZone)}<section class="empty"><h1>No chores yet</h1>
-<p>A chore is a goose recipe plus a CronJob that runs <code>aemtli run &lt;recipe&gt;</code>. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p></section>`;
+<p>A chore is a goose recipe or a job, plus a CronJob that runs it. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p></section>`;
   }
   return `${needsYou(needs, timeZone)}
-${weekChart(week, items, timeZone)}
-${comingUp(items, timeZone)}`;
+${plan(items, week, now, timeZone)}`;
 }
 
 /** One chore: what it does, when, and its runs. */

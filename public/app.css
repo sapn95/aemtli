@@ -22,6 +22,7 @@
   --amber: #a8641a;
   --rule: #d5dde4;
   --square: 22px;
+  --strip: 19rem;
   color-scheme: light;
 }
 
@@ -83,53 +84,100 @@ footer { max-width: 68rem; margin: 0 auto; padding: 1rem 1.25rem 2rem; color: va
 h1 { font-size: 2rem; line-height: 1.15; font-weight: 750; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
 h2 { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem; }
 
-/* ---- the Ämtliplan ------------------------------------------------------ */
+/* ---- the Ämtliplan ----------------------------------------------------- */
 
-.plan-head { display: flex; align-items: baseline; gap: 1rem; margin-top: 1rem; }
+/* One row per chore: what it is and when it runs, this week as seven marks,
+   what came of the last run, and the button. On a wide screen the strips line
+   up under one row of day names and the rows read as the chart they are; on a
+   phone each row stacks and the marks carry their own day letters. */
+
+.plan { margin-top: 1rem; }
+.plan-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
 .plan-head p { margin: 0; color: var(--pencil); }
 
-.grid-wrap {
-  margin-top: 1rem;
-  overflow-x: auto;
-  background-color: var(--sheet);
-  /* Squared paper: the chart is drawn on the same grid a school Ämtliplan is. */
-  background-image:
-    linear-gradient(var(--squares) 1px, transparent 1px),
-    linear-gradient(90deg, var(--squares) 1px, transparent 1px);
-  background-size: var(--square) var(--square);
+.chores { list-style: none; margin: 1rem 0 0; padding: 0; }
+
+.chore {
+  display: grid;
+  grid-template-areas: "head strip meta act";
+  grid-template-columns: minmax(10rem, 1.4fr) var(--strip) minmax(9rem, 0.9fr) auto;
+  gap: 0 1.25rem;
+  align-items: center;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--rule);
+}
+.chore:last-child { border-bottom: 1px solid var(--rule); }
+
+.head { grid-area: head; min-width: 0; }
+.head .name { font-size: 1.0625rem; font-weight: 700; color: var(--ink); text-decoration: none; }
+.head .name:hover { text-decoration: underline; }
+/* The schedule in words, as loud as the name: it is what the page is about. */
+.head .when { margin: 0.1rem 0 0; font-size: 0.9375rem; color: var(--royal); }
+
+/* The day names, in the same column the strips sit in. */
+.week-head {
+  display: grid;
+  grid-template-areas: "head strip meta act";
+  grid-template-columns: minmax(10rem, 1.4fr) var(--strip) minmax(9rem, 0.9fr) auto;
+  gap: 0 1.25rem;
+  margin: 1.25rem 0 0;
+}
+.week-head .days {
+  grid-area: strip;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.3rem;
+}
+.week-head li { text-align: center; font-size: 0.75rem; line-height: 1.25; color: var(--pencil); }
+.week-head .dow, .week-head .dom { display: block; }
+.week-head li.today { color: var(--royal); font-weight: 700; }
+.week-head .dom { color: var(--ink); font-weight: 700; font-size: 0.875rem; }
+.week-head li.today .dom { color: var(--royal); }
+
+.strip {
+  grid-area: strip;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--sheet);
   border: 1px solid var(--rule);
-  border-radius: 6px;
+  border-radius: 5px;
+  overflow: hidden;
 }
-
-.grid { border-collapse: collapse; width: 100%; min-width: 44rem; }
-.grid th, .grid td { padding: 0.6rem 0.5rem; vertical-align: top; text-align: left; }
-.grid thead th { font-weight: 600; color: var(--pencil); width: 11%; }
-.grid thead th .dow { display: block; font-size: 0.8125rem; }
-.grid thead th .dom { display: block; font-size: 1.375rem; color: var(--ink); font-weight: 700; }
-.grid thead th.today .dom { color: var(--royal); }
-.grid tbody th { font-weight: 700; width: 23%; }
-.grid tbody th a { color: var(--ink); text-decoration: none; }
-.grid tbody th a:hover { text-decoration: underline; }
-.grid tbody tr + tr { border-top: 1px solid var(--rule); }
-.grid td.today, .grid th.today { background: color-mix(in srgb, var(--royal-soft) 70%, transparent); }
-.paused { display: block; font-weight: 400; font-size: 0.8125rem; color: var(--pencil); }
-
-.mark, .due, .missed, .more {
-  display: flex; align-items: baseline; gap: 0.3rem;
-  font-size: 0.875rem; line-height: 1.3; text-decoration: none; white-space: nowrap;
+.strip .day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: 2.6rem;
+  border-left: 1px solid var(--rule);
 }
-.mark { font-weight: 700; }
-.mark .t { font-weight: 400; color: var(--pencil); }
+.strip .day:first-child { border-left: 0; }
+.strip .day.today { background: color-mix(in srgb, var(--royal-soft) 70%, transparent); }
+.strip .dow { display: none; font-size: 0.6875rem; color: var(--pencil); line-height: 1; }
+
+.marks { display: flex; align-items: center; justify-content: center; gap: 0.25rem; min-height: 1.15rem; }
+.mark { font-size: 1.125rem; font-weight: 700; line-height: 1; text-decoration: none; }
 .mark.succeeded { color: var(--green); }
 .mark.failed, .mark.cancelled { color: var(--redpen); }
 .mark.running { color: var(--amber); }
-.due { color: var(--royal); }
-.due::before { content: ""; width: 0.45rem; height: 0.45rem; border: 1.5px solid currentColor; border-radius: 50%; align-self: center; }
-/* A box left empty on the chart: the slot passed and nothing ran. */
-.missed { color: var(--redpen); }
-.missed::before { content: ""; width: 0.5rem; height: 0.5rem; border: 1.5px solid currentColor; align-self: center; }
-.more { color: var(--pencil); }
-.many .word { color: var(--pencil); }
+a.mark:hover { text-decoration: underline; }
+.mark .count { font-size: 0.625rem; font-weight: 600; color: var(--pencil); vertical-align: super; }
+/* A slot that passed with nothing in it, and one still to come. */
+.mark.missed { width: 0.6rem; height: 0.6rem; border: 1.5px solid var(--redpen); }
+.mark.due { width: 0.55rem; height: 0.55rem; border: 1.5px solid var(--royal); border-radius: 50%; }
+.mark.none { width: 0.25rem; height: 0.25rem; border-radius: 50%; background: var(--squares); }
+
+.meta { grid-area: meta; display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.875rem; min-width: 0; }
+.meta .next { font-weight: 650; }
+.meta .last a { color: var(--pencil); text-decoration: none; }
+.meta .last a:hover { text-decoration: underline; }
+.act { grid-area: act; }
 
 /* ---- needs you -------------------------------------------------------- */
 
@@ -203,6 +251,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .quiet-button { background: transparent; color: var(--royal); }
 
 .notice { min-height: 1.5rem; color: var(--pencil); margin: 0.75rem 0 0; }
+.notice:empty { min-height: 0; margin: 0; }
 
 /* ---- runs --------------------------------------------------------------- */
 
@@ -286,27 +335,50 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
 
 /* ---- small screens -------------------------------------------------------- */
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .top { gap: 1rem; flex-wrap: wrap; }
   .who { display: none; }
   h1 { font-size: 1.6rem; }
-  .grid { min-width: 0; }
-  .grid tbody th { width: 30%; font-size: 0.9375rem; }
-  .grid th, .grid td { padding: 0.5rem 0.25rem; }
-  .mark .t, .due, .missed { font-size: 0; }
-  .mark { font-size: 1rem; }
-  .due::before, .missed::before { width: 0.6rem; height: 0.6rem; }
-  .due.many, .missed.many { font-size: 0.8125rem; }
-  .chore { grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.25rem 1rem; }
-  .last, .act { grid-column: 2; }
-  .last { flex-direction: row; flex-wrap: wrap; gap: 0 0.4rem; }
-  .next .time { font-size: 1.375rem; }
+
+  /* The chart becomes a card per chore: name and schedule, then the week
+     with its day letters, then what came of the last run and the button. */
+  .week-head { display: none; }
+  /* The name and the schedule own the top line; the button sits with the
+     facts below, where it is not the loudest thing on the card. */
+  .chore {
+    grid-template-areas: "head head" "strip strip" "meta act";
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem 0.75rem;
+    align-items: start;
+    padding: 0.9rem 0;
+  }
+  .meta { align-items: baseline; }
+  .act { justify-self: end; align-self: center; }
+  .head .name { font-size: 1.125rem; }
+  .strip .dow { display: block; }
+  .strip .day { min-height: 3.1rem; }
+  /* Side by side while they fit, and no dangling separator when they do not. */
+  .meta { flex-direction: row; flex-wrap: wrap; gap: 0 0.9rem; }
+  .act .quiet-button { padding: 0.3rem 0.65rem; font-size: 0.875rem; border-width: 1px; }
+
+  .chore .desc { display: none; }
   .runs li a { grid-template-columns: minmax(0, 1fr) auto; }
   .runs .took, .runs .trigger { display: none; }
+  h2 { margin-top: 1.75rem; }
+  .lede { font-size: 1rem; }
+  /* The chat: the controls on one line, and a log that leaves room for the
+     keyboard instead of a tall empty box. */
+  .chat-bar { gap: 0.5rem 0.75rem; }
+  .chat-bar h1 { flex-basis: 100%; }
+  .chat-bar label { flex: 1; }
+  .chat-bar select { flex: 1; min-width: 0; }
+  #new { padding: 0.35rem 0.7rem; font-size: 0.875rem; border-width: 1px; }
+  .chat { min-height: 32vh; max-height: 46vh; padding: 0.75rem; }
   .composer { flex-direction: column; align-items: stretch; }
   .composer-actions { flex-direction: row; }
   .args { grid-template-columns: minmax(0, 1fr); }
   .args dt { margin-top: 0.3rem; }
+  .facts { gap: 0.5rem 1.5rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

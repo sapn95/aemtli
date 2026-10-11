@@ -129,6 +129,7 @@ export function createApp(deps) {
     const judgeFrom = Math.max(created, oldest);
     return weekOf(now(), displayZone).map(day => {
       const cell = {
+        start: day.start,
         today: day.today,
         runs: runs.filter(r => new Date(r.startedAt) >= day.start && new Date(r.startedAt) < day.end).reverse(),
         planned: [],
@@ -197,7 +198,7 @@ export function createApp(deps) {
       const items = await collect();
       const week = { days: weekOf(now(), displayZone) };
       const needs = gateways?.configured ? await gateways.pending() : NONE;
-      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, needs }));
+      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, now: now(), needs }));
     }
     if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(chatCwd, gateways?.mcpServers ?? []), 'chat.js', 'chat');
     if (req.method === 'GET' && path === '/approvals') {
