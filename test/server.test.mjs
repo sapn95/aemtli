@@ -10,18 +10,18 @@ import { startServer } from '../src/web/server.mjs';
 import { createRunDir, writeJsonAtomic } from '../src/store/runs.mjs';
 
 const ORIGIN = 'https://chores.example';
-const RUN_ID = '20261012T061300Z-ab12';
+const RUN_ID = '20261005T061300Z-ab12';
 
 /** A fake k8s client with one recipe CronJob; `running` makes its Job active. */
-function fakeK8s({ running = false, fail = false } = {}) {
+function fakeK8s({ running = false, fail = false, schedule = '13 8 * * 1', created } = {}) {
   const started = [];
   return {
     started,
     async listCronJobs() {
       if (fail) throw new Error('api down');
       return [{
-        metadata: { name: 'hello-cron', labels: { 'aemtli.sapn.ch/recipe': 'hello' } },
-        spec: { schedule: '13 8 * * 1', timeZone: 'Europe/Zurich' },
+        metadata: { name: 'hello-cron', labels: { 'aemtli.sapn.ch/recipe': 'hello' }, creationTimestamp: created },
+        spec: { schedule, timeZone: 'Europe/Zurich' },
       }, {
         metadata: { name: 'paused' },
         spec: { schedule: '0 0 * * *', suspend: true },
@@ -35,18 +35,22 @@ function fakeK8s({ running = false, fail = false } = {}) {
 }
 
 /** Starts the UI against temp dirs; `body` gets a request helper. */
-async function withUi(body, { k8s = fakeK8s(), verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
+async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aemtli-ui-'));
   const recipesDir = join(root, 'recipes');
   const dataDir = join(root, 'data');
   mkdirSync(recipesDir);
   writeFileSync(join(recipesDir, 'hello.yaml'), 'title: Hello <b>world</b>\ndescription: Says "hi" & leaves\nprompt: hi\n');
-  const dir = createRunDir(dataDir, 'hello', RUN_ID);
-  writeJsonAtomic(join(dir, 'run.json'), { recipe: 'hello', id: RUN_ID, status: 'succeeded', trigger: 'schedule', startedAt: '2026-10-12T06:13:00Z', durationMs: 4200, tokens: { total: 15 }, model: 'fake-model' });
-  writeFileSync(join(dir, 'result.md'), 'Grüessech <script>alert(1)</script>\n');
+  const dir = createRunDir(dataDir, fixtureRun ? 'hello' : 'unused', RUN_ID);
+  writeJsonAtomic(join(dir, 'run.json'), { recipe: 'hello', id: RUN_ID, status: 'succeeded', trigger: 'schedule', startedAt: '2026-10-05T06:13:00Z', durationMs: 4200, tokens: { total: 15 }, model: 'fake-model' });
+  writeFileSync(join(dir, 'result.md'), '## Grüessech\n\nHi <script>alert(1)</script> [x](javascript:alert(1))\n\n| a | b |\n|---|---|\n| 1 | 2 |\n');
   writeFileSync(join(dir, 'run.log'), 'log line\n');
+  for (const [i, { startedAt, trigger = 'schedule' }] of moreRuns.entries()) {
+    const id = `${startedAt.replace(/[-:]/g, '').replace(/\.\d+/, '')}-${String(i).padStart(4, '0')}`;
+    writeJsonAtomic(join(createRunDir(dataDir, 'hello', id), 'run.json'), { recipe: 'hello', id, status: 'succeeded', trigger, startedAt, durationMs: 1000 });
+  }
   const lines = [];
-  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', log: l => lines.push(l), now: () => new Date('2026-10-11T12:00:00Z') }, { port: 0, host: '127.0.0.1' });
+  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
   const port = server.address().port;
   /** One request; `token` null means no Access header. */
   const call = (path, { method = 'GET', token = 'good', headers = {} } = {}) => new Promise((resolve, reject) => {
@@ -85,12 +89,65 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
     assert.match(res.body, /Hello &lt;b&gt;world&lt;\/b&gt;/);
     assert.match(res.body, /Says &quot;hi&quot; &amp; leaves/);
     assert.doesNotMatch(res.body, /<b>world<\/b>/);
-    // Monday 12 October, 08:13 in Zurich.
-    assert.match(res.body, /2026-10-12 08:13/);
-    assert.match(res.body, /badge succeeded/);
-    assert.match(res.body, /paused/);
+    // The schedule in words, and the next run: Monday 12 October, 08:13 in Zurich.
+    assert.match(res.body, />Mondays at 08:13</);
+    assert.match(res.body, /Mon 12 Oct<\/span><span class="time">08:13</);
+    assert.doesNotMatch(res.body, />13 8 \* \* 1</, 'no cron in the text, only in the tooltip');
+    // This week (5 to 11 Oct, Sunday is today): Monday's run is ticked off and links to it.
+    assert.match(res.body, />This week<\/h1><p>5 Oct to 11 Oct</);
+    assert.match(res.body, new RegExp(`<a class="mark succeeded" href="/recipes/hello/runs/${RUN_ID}" title="Done at 08:13"`));
+    assert.match(res.body, /<th scope="col" class="today" aria-current="date"><span class="dow">Sun<\/span><span class="dom">11</);
+    // The paused one runs only by hand and has nothing due.
+    assert.match(res.body, /Only by hand/);
+    assert.match(res.body, /Paused\. Normally every day at 00:00 \(UTC\)/, 'a zone other than the page\'s is named');
+    assert.match(res.body, />Mondays at 08:13</, 'the page\'s own zone is not');
+    assert.match(res.body, /<span class="status succeeded">Done<\/span>/);
     assert.match(res.body, /owner@example\.com/);
   }));
+
+test('a slot that passed without a run is marked, one still ahead is due', async () => {
+  const daily = { k8s: fakeK8s({ schedule: '13 8 * * *', created: '2026-10-07T00:00:00Z' }) };
+  const count = (body, kind) => body.match(new RegExp(`<span class="${kind}">`, 'g'))?.length ?? 0;
+  // Sunday noon: Wednesday to Sunday passed without a run. Monday ran; Tuesday
+  // was before the CronJob existed, so it is not held against it.
+  await withUi(async ({ call }) => {
+    const { body } = await call('/');
+    assert.equal(count(body, 'missed'), 5);
+    assert.equal(count(body, 'due'), 0);
+    assert.match(body, /<span class="missed"><span class="visually-hidden">Did not run at <\/span>08:13<\/span>/);
+  }, daily);
+  // Sunday 07:00 in Zurich: today's 08:13 is still due.
+  await withUi(async ({ call }) => {
+    const { body } = await call('/');
+    assert.equal(count(body, 'missed'), 4);
+    assert.equal(count(body, 'due'), 1);
+  }, { ...daily, now: '2026-10-11T05:00:00Z' });
+  // A run that started twelve minutes late still counts for its slot; one
+  // started by hand does not.
+  await withUi(async ({ call }) => {
+    assert.equal(count((await call('/')).body, 'missed'), 4, 'Tue, Thu, Fri, Sat; not Wed');
+  }, { k8s: fakeK8s({ schedule: '13 8 * * *' }), now: '2026-10-10T12:00:00Z', moreRuns: [{ startedAt: '2026-10-07T06:25:00Z' }, { startedAt: '2026-10-09T06:14:00Z', trigger: 'manual' }] });
+  // Without a creation time, only slots after the oldest run on disk are
+  // judged: older runs may have been pruned.
+  await withUi(async ({ call }) => {
+    assert.equal(count((await call('/')).body, 'missed'), 2, 'Fri, Sat');
+  }, { k8s: fakeK8s({ schedule: '13 8 * * *' }), now: '2026-10-10T12:00:00Z', fixtureRun: false, moreRuns: [{ startedAt: '2026-10-08T06:20:00Z' }] });
+  // Slots a quarter of an hour apart: a run at 08:20 keeps the 08:15 slot,
+  // not the 08:00 one as well.
+  await withUi(async ({ call }) => {
+    assert.equal(count((await call('/')).body, 'missed'), 2, 'Fri 08:15 and Sat 08:00');
+  }, { k8s: fakeK8s({ schedule: '0,15 8 * * *' }), now: '2026-10-10T12:00:00Z', fixtureRun: false, moreRuns: [{ startedAt: '2026-10-09T06:00:00Z' }, { startedAt: '2026-10-10T06:20:00Z' }] });
+  // Every minute: the chart shows the runs, not 1440 boxes a day.
+  await withUi(async ({ call }) => {
+    const { body } = await call('/');
+    assert.doesNotMatch(body, /class="(missed|due)/);
+    assert.match(body, /class="mark succeeded"/);
+  }, { k8s: fakeK8s({ schedule: '* * * * *' }) });
+  // Twenty minutes late is not missed yet: the pod may still be starting.
+  await withUi(async ({ call }) => {
+    assert.equal(count((await call('/')).body, 'due'), 1);
+  }, { ...daily, now: '2026-10-11T06:33:00Z' });
+});
 
 test('a recipe page lists its runs, a run page shows the answer escaped', () =>
   withUi(async ({ call }) => {
@@ -99,8 +156,13 @@ test('a recipe page lists its runs, a run page shows the answer escaped', () =>
     assert.match(recipe.body, new RegExp(`/recipes/hello/runs/${RUN_ID}`));
     const run = await call(`/recipes/hello/runs/${RUN_ID}`);
     assert.equal(run.status, 200);
-    assert.match(run.body, /Grüessech &lt;script&gt;/);
+    assert.match(run.body, /<h2>Grüessech<\/h2>/, 'the result is rendered Markdown');
+    assert.match(run.body, /<td>1<\/td>/);
+    assert.match(run.body, /Hi &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.doesNotMatch(run.body, /<script>alert/);
+    assert.doesNotMatch(run.body, /href="javascript:/);
+    assert.match(run.body, /Mon 5 Oct, 08:13/, 'the run is titled by when it ran, in the display zone');
+    assert.match(run.body, /<p class="crumb"><a href="\/recipes\/hello">Hello &lt;b&gt;world&lt;\/b&gt;<\/a>/);
     assert.match(run.body, /log line/);
     assert.equal((await call('/recipes/nope')).status, 404);
     assert.equal((await call('/recipes/hello/runs/20261012T061300Z-ffff')).status, 404);
@@ -132,6 +194,13 @@ test('static files are served from the list, nothing else', () =>
     const css = await call('/static/app.css');
     assert.equal(css.status, 200);
     assert.match(css.headers['content-type'], /text\/css/);
+    const font = await call('/static/fonts/schibsted-grotesk.woff2');
+    assert.equal(font.status, 200);
+    assert.equal(font.headers['content-type'], 'font/woff2');
+    assert.equal((await call('/static/fonts/OFL.txt')).status, 200);
+    assert.equal((await call('/static/fonts/')).status, 404);
+    assert.equal((await call('/static/constructor')).status, 404, 'only the list\'s own keys');
+    assert.equal((await call('/static/__proto__')).status, 404);
     assert.equal((await call('/static/../package.json')).status, 404);
     assert.equal((await call('/static/server.mjs')).status, 404);
   }));

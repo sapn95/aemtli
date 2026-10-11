@@ -14,7 +14,7 @@ labels:
     includeSelectors: false
 images:
   - name: ghcr.io/sapn95/aemtli
-    newTag: 0.1.1
+    newTag: 0.2.0
 resources:
   - namespace.yaml
   - ../base
@@ -46,3 +46,4 @@ configMapGenerator:
       - CF_ACCESS_AUD=replace-with-the-access-application-aud-tag
       - ALLOWED_EMAILS=owner@example.com
       - PUBLIC_ORIGIN=https://chores.example.com
+      - DISPLAY_TIME_ZONE=Europe/Zurich

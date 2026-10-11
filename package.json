@@ -1,6 +1,6 @@
 {
   "name": "aemtli",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Chores for goose: recipes on a Kubernetes schedule, a dashboard of their runs, and a chat, behind Cloudflare Access.",
   "type": "module",
@@ -25,6 +25,7 @@
     "url": "git+https://github.com/sapn95/aemtli.git"
   },
   "dependencies": {
+    "markdown-it": "^15.0.2",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

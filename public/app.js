@@ -9,9 +9,9 @@ for (const button of document.querySelectorAll('button.run')) {
     try {
       const res = await fetch(`/api/recipes/${encodeURIComponent(recipe)}/run`, { method: 'POST' });
       const body = await res.json().catch(() => ({}));
-      if (notice) notice.textContent = res.ok ? `${recipe} started as ${body.job}.` : `${recipe}: ${body.error ?? res.status}`;
+      if (notice) notice.textContent = res.ok ? `Started ${recipe}. Reload in a minute to see how it went.` : `${recipe} did not start: ${body.error ?? res.status}`;
     } catch (err) {
-      if (notice) notice.textContent = `${recipe}: ${err.message}`;
+      if (notice) notice.textContent = `${recipe} did not start: ${err.message}`;
       button.disabled = false;
     }
   });

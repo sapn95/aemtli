@@ -84,7 +84,7 @@ jobs:
           load: true
       - name: everything a recipe needs is on the path
         run: |
-          docker run --rm aemtli:ci sh -c 'aemtli --help | head -1 && goose --version && node --version && npx --version && uvx --version && python3 --version'
+          docker run --rm aemtli:ci sh -c 'aemtli --help | head -1 && goose --version && node --version && npx --version && uvx --version && python3 --version && jq --version'
           # goose must be able to write its home as the image's user.
           docker run --rm --read-only --tmpfs /home/goose:rw,mode=1777 aemtli:ci goose --version
 

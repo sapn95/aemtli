@@ -13,7 +13,7 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | Part | What it does |
 | --- | --- |
 | `aemtli run <recipe>` | What a CronJob runs. Starts `goose run --recipe`, waits, and writes `run.json`, `result.md` and `run.log` to the shared volume. Exit 0 only if a model actually answered. |
-| `aemtli web` | The dashboard (recipes, schedule, next and last run, "Run now"), the run pages, and the chat. |
+| `aemtli web` | The dashboard, the run pages, and the chat. The dashboard draws the week like a chore chart: a tick for each run, a red cross where one failed, an empty box where a slot passed without a run, and the times still due. Below it, every recipe with its schedule in words ("Weekdays at 07:00"), its next and last run, and "Run now". A run page shows the answer rendered from Markdown. |
 | `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
 
@@ -96,6 +96,7 @@ Two things goose does that the runner works around:
 | `GOOSE_SERVER__SECRET_KEY` | | without it the chat is off |
 | `DATA_DIR`, `RECIPES_DIR` | `/data`, `/recipes` | |
 | `CHAT_CWD` | `/data/workspace` | goose's working directory for chat sessions |
+| `DISPLAY_TIME_ZONE` | `UTC` | the zone the dashboard shows times and weeks in, e.g. `Europe/Zurich` |
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),
@@ -126,4 +127,5 @@ succeeds with the key the proxy adds.
 
 ## Licence
 
-MIT.
+MIT. The typeface in `public/fonts/` is Schibsted Grotesk by the Schibsted-Grotesk
+Project Authors, under the SIL Open Font License (`public/fonts/OFL.txt`).
