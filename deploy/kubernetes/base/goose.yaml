@@ -1,0 +1,96 @@
+# goose serve: the agent the chat talks to. It has a shell (goose's developer
+# extension), so it gets no Kubernetes token, no model key (it talks to the
+# model through aemtli-model-proxy with a placeholder), no way into the
+# cluster or the home network, and only the web pod may reach it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aemtli-goose
+  labels:
+    app.kubernetes.io/name: aemtli-goose
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-goose
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aemtli-goose
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: goose
+          image: ghcr.io/sapn95/aemtli
+          command: ["sh", "-c", "mkdir -p /data/goose/workspace && exec goose serve --host 0.0.0.0 --port 3284"]
+          ports:
+            - name: acp
+              containerPort: 3284
+          envFrom:
+            # GOOSE_PROVIDER, GOOSE_MODEL, and the provider's host pointed at
+            # aemtli-model-proxy with a placeholder key.
+            - configMapRef:
+                name: aemtli-goose-env
+          env:
+            - name: GOOSE_SERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aemtli-goose-server
+                  key: GOOSE_SERVER__SECRET_KEY
+            - name: XDG_CONFIG_HOME
+              value: /data/goose/config
+            - name: XDG_DATA_HOME
+              value: /data/goose/share
+            - name: XDG_STATE_HOME
+              value: /data/goose/state
+          readinessProbe:
+            tcpSocket:
+              port: acp
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: goose
+              mountPath: /data/goose
+            - name: home
+              mountPath: /home/goose
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: goose
+          persistentVolumeClaim:
+            claimName: aemtli-goose
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aemtli-goose
+spec:
+  selector:
+    app.kubernetes.io/name: aemtli-goose
+  ports:
+    - name: acp
+      port: 3284
+      targetPort: acp

@@ -1,0 +1,99 @@
+# The dashboard and the chat. It reads runs from the shared volume, lists and
+# starts Jobs through its own Role, and forwards /acp to goose with the
+# server secret, which never reaches the browser.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aemtli-web
+  labels:
+    app.kubernetes.io/name: aemtli-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aemtli-web
+    spec:
+      serviceAccountName: aemtli-web
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: ghcr.io/sapn95/aemtli
+          args: ["aemtli", "web"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # AUTH_MODE, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, ALLOWED_EMAILS,
+            # PUBLIC_ORIGIN.
+            - configMapRef:
+                name: aemtli-web-env
+          env:
+            - name: GOOSE_SERVE_HOST
+              value: aemtli-goose
+            - name: GOOSE_SERVE_PORT
+              value: "3284"
+            - name: GOOSE_SERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aemtli-goose-server
+                  key: GOOSE_SERVER__SECRET_KEY
+            # goose's own path for the chat's working directory.
+            - name: CHAT_CWD
+              value: /data/goose/workspace
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: runs
+              mountPath: /data/runs
+              readOnly: true
+            - name: recipes
+              mountPath: /recipes
+              readOnly: true
+      volumes:
+        - name: runs
+          persistentVolumeClaim:
+            claimName: aemtli-runs
+            readOnly: true
+        - name: recipes
+          configMap:
+            name: aemtli-recipes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aemtli-web
+spec:
+  selector:
+    app.kubernetes.io/name: aemtli-web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -1,0 +1,10 @@
+# The smallest useful recipe: proves that the schedule, goose, the model and
+# the result page are wired together, at the cost of a few hundred tokens.
+version: 1.0.0
+title: Hello
+description: Answers in one sentence, to show the whole chain works
+instructions: >-
+  You are run on a schedule with nobody watching. Answer in one short
+  sentence and use no tools.
+prompt: Say good morning and name today's weekday.
+extensions: []

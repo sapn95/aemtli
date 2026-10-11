@@ -1,0 +1,42 @@
+{
+  "messages": [
+    {
+      "id": null,
+      "role": "user",
+      "created": 1791727806,
+      "content": [
+        {
+          "type": "text",
+          "text": "Sag hallo auf Berndeutsch."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "msg_3b56d9a8-bf94-40fc-afcd-ee9c277b682d",
+      "role": "assistant",
+      "created": 1791727812,
+      "content": [
+        {
+          "type": "text",
+          "text": "Network error: Could not connect to 127.0.0.1:1 — check your network connection and try again.\n\nPlease resend your message to try again."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    }
+  ],
+  "metadata": {
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "status": "completed"
+  }
+}

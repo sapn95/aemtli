@@ -1,0 +1,48 @@
+# A complete install on top of ../base: the recipes, one CronJob per recipe,
+# the settings, and the two secrets. The secrets come through the External
+# Secrets Operator: the model key from a ClusterSecretStore called
+# "proton-pass" (github.com/sapn95/eso-proton-pass), the goose server key from
+# ESO's Password generator, so nobody ever has to make one up.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aemtli
+# The dashboard finds recipes by this label, so the CronJobs here need it as
+# much as the base does.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: aemtli
+    includeSelectors: false
+images:
+  - name: ghcr.io/sapn95/aemtli
+    newTag: 0.1.0
+resources:
+  - namespace.yaml
+  - ../base
+  - secrets.yaml
+  - cronjob-hello.yaml
+  - cronjob-release-watch.yaml
+  - networkpolicy-ingress.yaml
+configMapGenerator:
+  - name: aemtli-recipes
+    files:
+      - recipes/hello.yaml
+      - recipes/release-watch.yaml
+  # goose talks to the model through aemtli-model-proxy, which adds the key;
+  # the key here is a placeholder goose insists on having.
+  - name: aemtli-goose-env
+    literals:
+      - GOOSE_PROVIDER=anthropic
+      - GOOSE_MODEL=claude-opus-5-5
+      - ANTHROPIC_HOST=http://aemtli-model-proxy:8080
+      - ANTHROPIC_API_KEY=placeholder-the-proxy-adds-the-real-key
+  - name: aemtli-model-proxy-env
+    literals:
+      - MODEL_UPSTREAM=https://api.anthropic.com
+      - MODEL_AUTH_HEADER=x-api-key
+  - name: aemtli-web-env
+    literals:
+      - AUTH_MODE=access
+      - CF_ACCESS_TEAM_DOMAIN=example-team.cloudflareaccess.com
+      - CF_ACCESS_AUD=replace-with-the-access-application-aud-tag
+      - ALLOWED_EMAILS=owner@example.com
+      - PUBLIC_ORIGIN=https://chores.example.com

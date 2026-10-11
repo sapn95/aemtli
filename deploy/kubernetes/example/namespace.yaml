@@ -1,0 +1,11 @@
+# "restricted" pod security: every pod here already runs as non-root with no
+# capabilities, and this makes the API server refuse one that does not. It
+# matters because the UI may create Jobs; without it a Job could ask for a
+# privileged pod or a hostPath.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aemtli
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

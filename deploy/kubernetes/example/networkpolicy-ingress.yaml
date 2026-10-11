@@ -1,0 +1,21 @@
+# Only the Cloudflare tunnel's connector may reach the UI. Access in front of
+# it decides who gets that far; the UI checks Access's token again itself.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aemtli-web-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudflared
+          podSelector:
+            matchLabels:
+              app: cloudflared
+      ports:
+        - port: 8080

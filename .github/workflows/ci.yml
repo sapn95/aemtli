@@ -1,0 +1,120 @@
+# Each check runs as its own step so that a red one names itself in the
+# checks list. The frame (triggers, permissions, concurrency, timeouts, the
+# workflow and secret jobs) is the shared one:
+# https://github.com/sapn95/.github/blob/main/CI.md
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor package.json claims, and the release the image ships.
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: install
+        run: npm ci --ignore-scripts
+      - name: lint
+        run: npm run lint
+      - name: hygiene, being secrets, personal data and tracked state files
+        run: npm run hygiene
+      - name: tests, with a coverage floor under them
+        run: npm run coverage
+
+  manifests:
+    name: kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          catalog='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          for dir in deploy/kubernetes/base deploy/kubernetes/example; do
+            echo "== ${dir}"
+            kubectl kustomize "$dir" \
+              | ./kubeconform -strict -summary -schema-location default -schema-location "$catalog" -
+          done
+
+  image:
+    name: image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      # amd64 only on a pull request: it proves the Dockerfile. Both
+      # architectures are built for a release.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: aemtli:ci
+          load: true
+      - name: everything a recipe needs is on the path
+        run: |
+          docker run --rm aemtli:ci sh -c 'aemtli --help | head -1 && goose --version && node --version && npx --version && uvx --version && python3 --version'
+          # goose must be able to write its home as the image's user.
+          docker run --rm --read-only --tmpfs /home/goose:rw,mode=1777 aemtli:ci goose --version
+
+  workflows:
+    name: lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: actionlint
+        uses: raven-actions/actionlint@v2.2.0
+        env:
+          SHELLCHECK_OPTS: --severity=warning
+      - name: yamllint
+        run: pipx run yamllint .
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v24
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

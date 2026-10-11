@@ -1,0 +1,81 @@
+# The only pod with the model's API key, as a mounted file. goose and the
+# recipe runs send their model calls here with a placeholder key; this puts
+# the real one on and forwards to the provider. An agent talked into running
+# `env` or reading /proc finds nothing worth taking.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aemtli-model-proxy
+  labels:
+    app.kubernetes.io/name: aemtli-model-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-model-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aemtli-model-proxy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: ghcr.io/sapn95/aemtli
+          args: ["aemtli", "model-proxy"]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # MODEL_UPSTREAM, MODEL_AUTH_HEADER, MODEL_AUTH_PREFIX.
+            - configMapRef:
+                name: aemtli-model-proxy-env
+          env:
+            - name: MODEL_KEY_FILE
+              value: /secrets/model/key
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: key
+              mountPath: /secrets/model
+              readOnly: true
+      volumes:
+        - name: key
+          secret:
+            secretName: aemtli-model
+            defaultMode: 0440
+            # The proxy starts without it and answers 503 until the key is
+            # in place; the mounted file then appears without a restart.
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aemtli-model-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: aemtli-model-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
