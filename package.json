@@ -1,6 +1,6 @@
 {
   "name": "aemtli",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Chores for goose: recipes on a Kubernetes schedule, a dashboard of their runs, and a chat, behind Cloudflare Access.",
   "type": "module",

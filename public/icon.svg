@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ämtli">
+  <!-- A cell of the chore chart: squared paper, and the tick that says it is
+       done. The paper square keeps the icon legible on a dark tab bar too, and
+       the tick stays inside it so nothing looks clipped at 16 pixels. -->
+  <rect width="32" height="32" rx="6" fill="#f5f7f8"/>
+  <g stroke="#dde5ec" stroke-width="1.5">
+    <path d="M0 11h32M0 21h32M11 0v32M21 0v32"/>
+  </g>
+  <path d="M7.5 17 13 22.5 24.5 9.5" fill="none" stroke="#2b4fd8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

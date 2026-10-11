@@ -102,6 +102,7 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
     assert.match(res.body, /Paused\. Normally every day at 00:00 \(UTC\)/, 'a zone other than the page\'s is named');
     assert.match(res.body, />Mondays at 08:13</, 'the page\'s own zone is not');
     assert.match(res.body, /<span class="status succeeded">Done<\/span>/);
+    assert.match(res.body, /<link rel="icon" href="\/static\/icon\.svg" type="image\/svg\+xml">/);
     assert.match(res.body, /owner@example\.com/);
   }));
 
@@ -194,6 +195,9 @@ test('static files are served from the list, nothing else', () =>
     const css = await call('/static/app.css');
     assert.equal(css.status, 200);
     assert.match(css.headers['content-type'], /text\/css/);
+    const icon = await call('/static/icon.svg');
+    assert.equal(icon.status, 200);
+    assert.match(icon.headers['content-type'], /image\/svg\+xml/);
     const font = await call('/static/fonts/schibsted-grotesk.woff2');
     assert.equal(font.status, 200);
     assert.equal(font.headers['content-type'], 'font/woff2');
