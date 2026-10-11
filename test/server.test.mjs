@@ -89,18 +89,22 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
     assert.match(res.body, /Hello &lt;b&gt;world&lt;\/b&gt;/);
     assert.match(res.body, /Says &quot;hi&quot; &amp; leaves/);
     assert.doesNotMatch(res.body, /<b>world<\/b>/);
-    // The schedule in words, and the next run: Monday 12 October, 08:13 in Zurich.
-    assert.match(res.body, />Mondays at 08:13</);
-    assert.match(res.body, /Mon 12 Oct<\/span><span class="time">08:13</);
+    // The schedule in words, as its own line next to the name.
+    assert.match(res.body, /<p class="when" title="13 8 \* \* 1 \(Europe\/Zurich\)">Mondays at 08:13<\/p>/);
     assert.doesNotMatch(res.body, />13 8 \* \* 1</, 'no cron in the text, only in the tooltip');
+    // When it runs next, said the way a person would.
+    assert.match(res.body, /<span class="next">tomorrow 08:13<\/span>/);
+    assert.match(res.body, /title="Says &quot;hi&quot; &amp; leaves"/, 'what it does is on the name');
+    assert.doesNotMatch(res.body, /title=""/, 'and no empty tooltip where there is none');
     // This week (5 to 11 Oct, Sunday is today): Monday's run is ticked off and links to it.
-    assert.match(res.body, />This week<\/h1><p>5 Oct to 11 Oct</);
-    assert.match(res.body, new RegExp(`<a class="mark succeeded" href="/recipes/hello/runs/${RUN_ID}" title="Done at 08:13"`));
-    assert.match(res.body, /<th scope="col" class="today" aria-current="date"><span class="dow">Sun<\/span><span class="dom">11</);
+    assert.match(res.body, /<h1 id="plan-title">This week<\/h1><p>5 Oct to 11 Oct<\/p>/);
+    assert.match(res.body, new RegExp(`<a class="mark succeeded" href="/recipes/hello/runs/${RUN_ID}">✓</a>`));
+    assert.match(res.body, /<li class="day ran" title="Mon 5 Oct: done at 08:13">/, 'the day carries its run');
+    assert.match(res.body, /<li class="day today" title="Sun 11 Oct: nothing">/, 'and today is marked as today');
+    assert.match(res.body, /Mon 5 Oct: done at 08:13/, 'every day says what it holds');
     // The paused one runs only by hand and has nothing due.
-    assert.match(res.body, /Only by hand/);
+    assert.match(res.body, /<span class="next">only by hand<\/span>/);
     assert.match(res.body, /Paused\. Normally every day at 00:00 \(UTC\)/, 'a zone other than the page\'s is named');
-    assert.match(res.body, />Mondays at 08:13</, 'the page\'s own zone is not');
     assert.match(res.body, /<span class="status succeeded">Done<\/span>/);
     assert.match(res.body, /<link rel="icon" href="\/static\/icon\.svg" type="image\/svg\+xml">/);
     assert.match(res.body, /owner@example\.com/);
@@ -108,14 +112,14 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
 
 test('a slot that passed without a run is marked, one still ahead is due', async () => {
   const daily = { k8s: fakeK8s({ schedule: '13 8 * * *', created: '2026-10-07T00:00:00Z' }) };
-  const count = (body, kind) => body.match(new RegExp(`<span class="${kind}">`, 'g'))?.length ?? 0;
+  const count = (body, kind) => body.match(new RegExp(`<span class="mark ${kind}"`, 'g'))?.length ?? 0;
   // Sunday noon: Wednesday to Sunday passed without a run. Monday ran; Tuesday
   // was before the CronJob existed, so it is not held against it.
   await withUi(async ({ call }) => {
     const { body } = await call('/');
     assert.equal(count(body, 'missed'), 5);
     assert.equal(count(body, 'due'), 0);
-    assert.match(body, /<span class="missed"><span class="visually-hidden">Did not run at <\/span>08:13<\/span>/);
+    assert.match(body, /did not run at 08:13/, 'the day says what it missed');
   }, daily);
   // Sunday 07:00 in Zurich: today's 08:13 is still due.
   await withUi(async ({ call }) => {
@@ -141,7 +145,7 @@ test('a slot that passed without a run is marked, one still ahead is due', async
   // Every minute: the chart shows the runs, not 1440 boxes a day.
   await withUi(async ({ call }) => {
     const { body } = await call('/');
-    assert.doesNotMatch(body, /class="(missed|due)/);
+    assert.doesNotMatch(body, /class="mark (missed|due)"/);
     assert.match(body, /class="mark succeeded"/);
   }, { k8s: fakeK8s({ schedule: '* * * * *' }) });
   // Twenty minutes late is not missed yet: the pod may still be starting.
