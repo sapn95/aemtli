@@ -403,3 +403,45 @@ test('a file a job kept is a download from its run page, and nothing else is', (
     }
     assert.equal((await call(`/recipes/hello/runs/${RUN_ID}/files/pain.xml`, { token: null })).status, 403, 'signed in only');
   }));
+
+test('a conversation can be put away and taken back out, and deleting it forgets that', async () => {
+  const goose = fakeGoose();
+  const chats = createChatBroker({ connect: goose.connect, cwd: '/w' });
+  await withUi(async ({ call, port, root }) => {
+    const same = { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+    const { id } = JSON.parse((await post(port, '/api/chats', {}, same)).body);
+    const listed = async () => JSON.parse((await call('/api/chats')).body).chats.find(c => c.id === id);
+    assert.equal((await listed()).archived, false);
+    assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: 'yes' }, same)).status, 400);
+    assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: true }, same)).status, 200);
+    assert.equal((await listed()).archived, true);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'chats-archived.json'), 'utf8')), [id]);
+    // Another browser, or this one after a reload, sees the same.
+    assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: false }, same)).status, 200);
+    assert.equal((await listed()).archived, false);
+    // A file somebody edited by hand: only ids that could name a conversation
+    // are read back, so nothing else reaches the page or the file again.
+    writeFileSync(join(root, 'state', 'chats-archived.json'), JSON.stringify(['../etc/passwd', 'x'.repeat(200), id, 7, null]));
+    assert.equal((await listed()).archived, true);
+    await post(port, `/api/chats/${id}/archive`, { archived: true }, same);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'chats-archived.json'), 'utf8')), [id]);
+    await post(port, `/api/chats/${id}/archive`, { archived: true }, same);
+    assert.equal((await call(`/api/chats/${id}`, { method: 'DELETE', headers: same })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'chats-archived.json'), 'utf8')), [], 'a deleted conversation is not an archived one');
+    assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: true }, { ...same, origin: 'https://evil.example' })).status, 403);
+  }, { chats });
+  chats.close();
+});
+
+test('without a state directory a conversation cannot be put away', async () => {
+  const goose = fakeGoose();
+  const chats = createChatBroker({ connect: goose.connect, cwd: '/w' });
+  await withUi(async ({ port }) => {
+    const same = { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+    const { id } = JSON.parse((await post(port, '/api/chats', {}, same)).body);
+    const res = await post(port, `/api/chats/${id}/archive`, { archived: true }, same);
+    assert.equal(res.status, 503);
+    assert.match(JSON.parse(res.body).error, /STATE_DIR/);
+  }, { chats, stateDir: false });
+  chats.close();
+});

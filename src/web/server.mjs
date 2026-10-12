@@ -79,6 +79,24 @@ export function createApp(deps) {
       return new Set();
     }
   }
+  // Conversations the owner put away: kept here rather than in goose, which
+  // has no such thing over ACP. Hidden from the list until the page asks for
+  // them, and never deleted by it.
+  const archivedFile = stateDir ? join(stateDir, 'chats-archived.json') : null;
+  function archived() {
+    if (!archivedFile) return new Set();
+    try {
+      const ids = JSON.parse(readFileSync(archivedFile, 'utf8'));
+      return new Set(Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && CHAT_ID.test(id)) : []);
+    } catch {
+      return new Set();
+    }
+  }
+  function saveArchived(ids) {
+    mkdirSync(stateDir, { recursive: true });
+    writeJsonAtomic(archivedFile, [...ids].sort().slice(0, 500));
+  }
+
   const NONE = { items: [], unreachable: [] };
 
   /** Resolves with the user's email, or null when the request may not pass. */
@@ -225,7 +243,10 @@ export function createApp(deps) {
     const [, , , id, action] = path.split('/');
     try {
       if (!id) {
-        if (req.method === 'GET') return sendJson(res, 200, { chats: await chats.list() });
+        if (req.method === 'GET') {
+          const away = archived();
+          return sendJson(res, 200, { chats: (await chats.list()).map(c => ({ ...c, archived: away.has(c.id) })) });
+        }
         if (req.method === 'POST') {
           const body = await jsonBody(req);
           return sendJson(res, 201, await chats.create(typeof body?.mode === 'string' ? body.mode : undefined));
@@ -235,6 +256,9 @@ export function createApp(deps) {
       if (!CHAT_ID.test(id)) return sendJson(res, 404, { error: 'no such conversation' });
       if (req.method === 'DELETE' && !action) {
         await chats.remove(id);
+        // A conversation that is gone is not one that was put away.
+        const away = archived();
+        if (away.delete(id) && archivedFile) saveArchived(away);
         return sendJson(res, 200, { deleted: id });
       }
       if (req.method === 'GET' && action === 'events') {
@@ -267,6 +291,15 @@ export function createApp(deps) {
           if (typeof body.text !== 'string' || !body.text.trim()) return sendJson(res, 400, { error: 'text is empty' });
           await chats.say(id, body.text);
           return sendJson(res, 202, { ok: true });
+        }
+        if (action === 'archive') {
+          if (!archivedFile) return sendJson(res, 503, { error: 'no place to keep that (STATE_DIR)' });
+          if (typeof body.archived !== 'boolean') return sendJson(res, 400, { error: 'archived must be true or false' });
+          const away = archived();
+          if (body.archived) away.add(id);
+          else away.delete(id);
+          saveArchived(away);
+          return sendJson(res, 200, { archived: body.archived });
         }
         if (action === 'stop') { await chats.stop(id); return sendJson(res, 200, { ok: true }); }
         if (action === 'answer') { chats.answer(id, String(body.option ?? '')); return sendJson(res, 200, { ok: true }); }
