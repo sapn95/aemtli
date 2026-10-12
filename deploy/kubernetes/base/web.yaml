@@ -55,8 +55,10 @@ spec:
               value: /secrets/gateways
             - name: NTFY_TOKEN_FILE
               value: /secrets/ntfy/token
-            # Which held calls were pushed already. On an emptyDir: after a
-            # restart, what still waits is pushed once more.
+            # The favourites and which held calls were pushed already, on the
+            # web pod's own small volume.
+            - name: STATE_DIR
+              value: /state
             - name: NOTIFY_STATE_FILE
               value: /state/notified.json
           readinessProbe:
@@ -114,8 +116,8 @@ spec:
             defaultMode: 0440
             optional: true
         - name: state
-          emptyDir:
-            sizeLimit: 1Mi
+          persistentVolumeClaim:
+            claimName: aemtli-web-state
 ---
 apiVersion: v1
 kind: Service

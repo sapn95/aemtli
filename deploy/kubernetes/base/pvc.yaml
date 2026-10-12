@@ -22,3 +22,15 @@ spec:
   resources:
     requests:
       storage: 3Gi
+---
+# The web UI's own few files: the favourite chores and which held calls were
+# pushed already. Small, and kept across restarts and upgrades.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aemtli-web-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 16Mi

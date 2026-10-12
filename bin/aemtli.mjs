@@ -149,6 +149,7 @@ async function web() {
     dataDir: env.DATA_DIR ?? '/data',
     recipesDir: env.RECIPES_DIR ?? '/recipes',
     chatCwd: env.CHAT_CWD ?? '/data/workspace',
+    stateDir: env.STATE_DIR || null,
     timeZone,
     gateways,
     allowedOrigin: publicOrigin,

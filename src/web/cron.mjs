@@ -123,6 +123,7 @@ export function nextRun(expression, from = new Date(), timeZone = 'UTC') {
   return null;
 }
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAY_NAMES = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
 
 /** "08:13" from an hour and a minute. */
@@ -134,6 +135,29 @@ function clock(hour, minute) {
 function ordinal(n) {
   const s = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] ?? 'th';
   return `${n}${s}`;
+}
+
+const capital = text => text[0].toUpperCase() + text.slice(1);
+
+/**
+ * When in a day a schedule fires, in words: { at: "07:10, 12:10 and 21:10" }
+ * for up to six times, or { other: "every 2 hours from 00:10" } or
+ * { other: "every 15 minutes from 08:00 to 17:45" } or, for anything
+ * irregular, { other: "8 times between 07:00 and 21:00" }. Never the cron
+ * expression itself.
+ */
+function timesOfDay(hours, minutes) {
+  const all = hours.flatMap(h => minutes.map(m => clock(h, m)));
+  if (all.length <= 6) return { at: list(all) };
+  const evenly = (values, span) => values.length > 1 && span % (values[1] - values[0]) === 0
+    && values.every((v, i) => v === values[0] + i * (values[1] - values[0])) && values.length === span / (values[1] - values[0]);
+  const contiguous = hours.every((h, i) => h === hours[0] + i);
+  if (minutes.length > 1 && minutes[0] === 0 && evenly(minutes, 60) && contiguous) {
+    return { other: `every ${minutes[1]} minutes from ${clock(hours[0], 0)} to ${clock(hours.at(-1), minutes.at(-1))}` };
+  }
+  if (minutes.length === 1 && contiguous) return { other: `every hour from ${all[0]} to ${all.at(-1)}` };
+  if (minutes.length === 1 && evenly(hours, 24)) return { other: `every ${hours[1] - hours[0]} hours from ${all[0]}` };
+  return { other: `${all.length} times between ${all[0]} and ${all.at(-1)}`, count: true };
 }
 
 /** Joins ["a", "b", "c"] as "a, b and c". */
@@ -156,7 +180,8 @@ export function describeCron(expression) {
   }
   const minutes = [...cron.minute].sort((a, b) => a - b);
   const hours = [...cron.hour].sort((a, b) => a - b);
-  if (cron.month.size !== 12) return expression;
+  // " in January and July" when not every month.
+  const months = cron.month.size === 12 ? '' : ` in ${list([...cron.month].sort((a, b) => a - b).map(m => MONTH_NAMES[m - 1]))}`;
   const allDom = cron.dom.size === 31;
   const allDow = [0, 1, 2, 3, 4, 5, 6].every(d => cron.dow.has(d));
   const both = cron.domStar || cron.dowStar;
@@ -164,26 +189,33 @@ export function describeCron(expression) {
 
   // Sub-hourly: every N minutes, every hour.
   if (hours.length === 24 && everyDay) {
-    if (minutes.length === 1) return `Every hour at :${String(minutes[0]).padStart(2, '0')}`;
+    if (minutes.length === 1) return `Every hour at :${String(minutes[0]).padStart(2, '0')}${months}`;
     const step = minutes[1] - minutes[0];
-    if (minutes[0] === 0 && minutes.every((m, i) => m === i * step) && 60 % step === 0) return `Every ${step} minutes`;
+    if (minutes[0] === 0 && minutes.every((m, i) => m === i * step) && 60 % step === 0) return `Every ${step} minutes${months}`;
     return expression;
   }
-  if (minutes.length !== 1 || hours.length > 3) return expression;
-  const times = list(hours.map(h => clock(h, minutes[0])));
+  const times = timesOfDay(hours, minutes);
+  const say = days => (times.at ? `${days}${months} at ${times.at}` : `${days}${months}, ${times.other}`);
 
-  if (everyDay) return `Every day at ${times}`;
+  if (everyDay) {
+    if (times.at || times.count || months) return say('Every day');
+    return capital(times.other);
+  }
   if (both && allDom) {
     const days = [...cron.dow].filter(d => d < 7).sort((a, b) => a - b);
-    if (days.join() === '1,2,3,4,5') return `Weekdays at ${times}`;
-    if (days.join() === '0,6') return `Weekends at ${times}`;
-    return `${list(days.map(d => DAY_NAMES[d]))} at ${times}`;
+    if (days.join() === '1,2,3,4,5') return say('Weekdays');
+    if (days.join() === '0,6') return say('Weekends');
+    return say(list(days.map(d => DAY_NAMES[d])));
   }
   // The 29th to the 31st are skipped in the months without them, which
   // "of each month" would hide.
   if (both && allDow) {
     const days = [...cron.dom].sort((a, b) => a - b);
-    if (days.at(-1) <= 28) return `On the ${list(days.map(ordinal))} of each month at ${times}`;
+    if (days.at(-1) <= 28) {
+      if (!months) return say(`On the ${list(days.map(ordinal))} of each month`);
+      const names = list([...cron.month].sort((a, b) => a - b).map(m => MONTH_NAMES[m - 1]));
+      return times.at ? `On the ${list(days.map(ordinal))} of ${names} at ${times.at}` : `On the ${list(days.map(ordinal))} of ${names}, ${times.other}`;
+    }
   }
   return expression;
 }
