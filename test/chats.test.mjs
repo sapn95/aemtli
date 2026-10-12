@@ -354,3 +354,23 @@ test('an answer is drawn whole when it ends, however long the wait between drawi
   assert.deepEqual(drawn.map(f => f.event.html), ['<p>Hallo zäme</p>']);
   b.close();
 });
+
+test('a goose that will not even say it stopped leaves the conversation usable', async () => {
+  const goose = fakeGoose();
+  const b = createChatBroker({ connect: goose.connect, cwd: '/w', answerMs: 40 });
+  const { id } = await b.create();
+  const w = watcher();
+  await b.watch(id, w);
+  await b.say(id, 'SLOW');
+  await settle();
+  const c = b.chats.get(id);
+  assert.equal(c.status, 'running');
+  // The fake answers session/cancel, so take that away first.
+  goose.sockets.at(-1).send = () => {};
+  await b.stop(id);
+  assert.equal(c.status, 'running', 'nothing said yet');
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(c.status, 'idle');
+  assert.match(c.events.at(-1).text, /did not say that it stopped/);
+  b.close();
+});
