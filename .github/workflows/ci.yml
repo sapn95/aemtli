@@ -37,6 +37,9 @@ jobs:
           cache: npm
       - name: install
         run: npm ci --ignore-scripts
+      # pdftotext, which the image has and ctx.pdfText uses.
+      - name: poppler
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils
       - name: lint
         run: npm run lint
       - name: hygiene, being secrets, personal data and tracked state files
@@ -84,7 +87,7 @@ jobs:
           load: true
       - name: everything a recipe needs is on the path
         run: |
-          docker run --rm aemtli:ci sh -c 'aemtli --help | head -1 && goose --version && node --version && npx --version && uvx --version && python3 --version && jq --version'
+          docker run --rm aemtli:ci sh -c 'aemtli --help | head -1 && goose --version && node --version && npx --version && uvx --version && python3 --version && jq --version && pdftotext -v'
           # goose must be able to write its home as the image's user.
           docker run --rm --read-only --tmpfs /home/goose:rw,mode=1777 aemtli:ci goose --version
 
