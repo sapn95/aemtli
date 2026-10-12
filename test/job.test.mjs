@@ -112,12 +112,15 @@ test('a job that throws, has no default export, or names an unknown gateway has 
     boom: 'export default async () => { throw new Error("the feed is gone"); }\n',
     empty: 'export const x = 1;\n',
     lost: 'export default async ctx => ctx.mcp("nowhere");\n',
+    // Taken off ctx, as a recipe might: it still finds its gateway.
+    board: 'export default async ({ cards }) => cards().ensure("x", { title: "t" });\n',
   });
-  const runs = await Promise.all(['boom', 'empty', 'lost'].map(name => runJob({ name, recipesDir, dataDir, anthropic: null })));
+  const runs = await Promise.all(['boom', 'empty', 'lost', 'board'].map(name => runJob({ name, recipesDir, dataDir, anthropic: null })));
   assert.deepEqual(runs.map(r => [r.status, r.error]), [
     ['failed', 'the feed is gone'],
     ['failed', 'empty.mjs has no default export to run'],
     ['failed', 'no gateway "nowhere" in MCP_GATEWAYS'],
+    ['failed', 'no gateway "kanban" in MCP_GATEWAYS'],
   ]);
   await assert.rejects(runJob({ name: '../x', recipesDir, dataDir }), /not a job name/);
   await assert.rejects(runJob({ name: 'missing', recipesDir, dataDir }), /no job file/);

@@ -33,6 +33,11 @@ test('GATEWAYS: a JSON list with a token file per gateway, or a clear error', ()
     ['[{"name":"a","url":"file:///etc"}]', /http or https/],
   ]) assert.throws(() => parseGateways(spec, '/t', () => 'x'), why, spec);
   assert.throws(() => parseGateways('[{"name":"a","url":"http://x"}]', undefined), /GATEWAY_TOKENS_DIR/);
+  // A gateway with a token file of its own needs no directory.
+  const own = parseGateways('[{"name":"kanban","url":"http://k:8081","tokenFile":"/secrets/kanban/token"}]', undefined, path => ({ '/secrets/kanban/token': 'tok-k\n' })[path]);
+  assert.equal(own[0].token, 'tok-k');
+  assert.equal(parseGateways('[{"name":"epost","url":"http://e"},{"name":"kanban","url":"http://k","tokenFile":"/k"}]', '/t', path => path).map(g => g.token).join(' '), '/t/epost /k');
+  assert.throws(() => parseGateways('[{"name":"a","url":"http://x","tokenFile":"rel/token"}]', '/t', () => 'x'), /absolute path/);
 });
 
 test('the owner sees every argument whole, and what would hide is shown', () => {

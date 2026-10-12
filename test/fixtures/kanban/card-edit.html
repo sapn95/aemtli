@@ -1,0 +1,58 @@
+
+<form hx-post="/card/1/update" hx-target="#card-1" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+  <div class="modal-header">
+    <h5>Edit Card</h5>
+    <button type="button" class="icon-btn" data-close-modal title="Close" aria-label="Close"><i class="bi bi-x"></i></button>
+  </div>
+  <div class="modal-body">
+    
+<label class="field">
+  <span>Title</span>
+  <input type="text" name="title" value="Rechnung &lt;Swisscom&gt; &amp; &#34;Co&#34;" placeholder="Card Title">
+</label>
+<label class="field">
+  <span>Description</span>
+  <textarea name="description" rows="3" placeholder="Description">Zahlbar bis 31.10.
+https://example.com/a?b=1&amp;c=2 ok</textarea>
+</label>
+<label class="field">
+  <span>Due date</span>
+  <input type="date" name="due" value="2026-10-31">
+</label>
+<div class="field">
+  <span>Subtasks</span>
+  <div class="subtasks-container">
+    
+<div class="subtask-row">
+  <input type="checkbox" class="subtask-complete" aria-label="Done">
+  <input type="text" class="subtask-text" value="QR lesen" placeholder="Subtask description" aria-label="Subtask">
+  <button type="button" class="icon-btn danger remove-subtask-btn" title="Remove" aria-label="Remove subtask"><i class="bi bi-x"></i></button>
+</div>
+
+<div class="subtask-row">
+  <input type="checkbox" class="subtask-complete" aria-label="Done" checked>
+  <input type="text" class="subtask-text" value="zahlen | Valiant" placeholder="Subtask description" aria-label="Subtask">
+  <button type="button" class="icon-btn danger remove-subtask-btn" title="Remove" aria-label="Remove subtask"><i class="bi bi-x"></i></button>
+</div>
+
+  </div>
+  <button type="button" class="btn btn-muted add-subtask-btn"><i class="bi bi-plus"></i> Add Subtask</button>
+  <input type="hidden" name="subtasks" class="subtasks-hidden">
+</div>
+
+    
+    <label class="field">
+      <span>Column</span>
+      <select name="lane">
+        
+        <option value="4" selected>To Do</option><option value="5">In Progress</option><option value="6">Done</option>
+      </select>
+    </label>
+    
+    
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </div>
+</form>

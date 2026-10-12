@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Kanban Board</title>
+  
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+  <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.min.css?v=d5ee4d204c04">
+  <link rel="stylesheet" href="/static/app.css?v=d5ee4d204c04">
+  
+  <script src="/static/theme.js?v=d5ee4d204c04"></script>
+
+</head>
+<body>
+<div class="container wide">
+  <header class="header">
+    <a href="/" class="icon-btn toggle" title="All boards" aria-label="All boards"><i class="bi bi-grid"></i></a>
+    <h1 class="board-title">Kanban Board</h1>
+    
+<span class="signed-in" title="Signed in as owner@example.com"><span class="avatar">O</span></span>
+
+    <a href="/search?board=main" class="icon-btn toggle" title="Search" aria-label="Search"><i class="bi bi-search"></i></a>
+    <a href="/b/main/archive" class="icon-btn toggle" title="Archive" aria-label="Archive"><i class="bi bi-archive"></i></a>
+    <a href="/b/main/columns" class="icon-btn toggle" title="Columns" aria-label="Columns"><i class="bi bi-layout-three-columns"></i></a>
+    
+<button type="button" id="darkModeToggle" class="icon-btn toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+  <i class="bi bi-sun light-only"></i>
+  <i class="bi bi-moon dark-only"></i>
+</button>
+
+  </header>
+
+  
+  <div class="add-row">
+    <button type="button" class="btn btn-primary btn-large" data-open-modal="addCardModal" data-lane="1">
+      <i class="bi bi-plus"></i> Add New Card
+    </button>
+  </div>
+  
+
+  
+  <nav class="lane-tabs" role="tablist">
+    
+    <button type="button" class="lane-tab active" role="tab" data-tab="1"
+      aria-selected="true">
+      To Do <span class="lane-count" data-count-for="1">1</span>
+    </button>
+    
+    <button type="button" class="lane-tab" role="tab" data-tab="2"
+      aria-selected="false">
+      In Progress <span class="lane-count" data-count-for="2">0</span>
+    </button>
+    
+    <button type="button" class="lane-tab" role="tab" data-tab="3"
+      aria-selected="false">
+      Done <span class="lane-count" data-count-for="3">0</span>
+    </button>
+    
+  </nav>
+
+  <main class="board" data-order-url="/b/main/order">
+    
+    <section class="lane active" data-tab="1">
+      <div class="lane-header">
+        <h3 class="lane-title">To Do <span class="lane-count" data-count-for="1">1</span></h3>
+        <button type="button" class="icon-btn edit" data-open-modal="addCardModal" data-lane="1" title="Add a card to To Do" aria-label="Add a card to To Do">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>
+      <div id="lane-1" class="lane-cards" data-lane="1">
+        
+<div class="card" id="card-1" data-id="1">
+  <h5 class="card-title">Zugewiesen</h5>
+  
+  
+  
+  
+  <div class="card-meta">
+    
+    
+      <span class="assignee" title="Assigned to helper@example.com">
+        <span class="avatar">H</span><span>helper</span>
+      </span>
+    
+  </div>
+  
+  <div class="card-actions">
+    <button type="button" class="icon-btn edit"
+      hx-get="/card/1/edit"
+      hx-target="#editCardModalContent"
+      hx-swap="innerHTML"
+      title="Edit" aria-label="Edit">
+      <i class="bi bi-pencil"></i>
+    </button>
+    
+    <button type="button" class="icon-btn edit move-btn move-left" data-move="-1" title="Move to the column on the left" aria-label="Move to the column on the left">
+      <i class="bi bi-arrow-left"></i>
+    </button>
+    <button type="button" class="icon-btn edit move-btn move-right" data-move="1" title="Move to the column on the right" aria-label="Move to the column on the right">
+      <i class="bi bi-arrow-right"></i>
+    </button>
+    
+    <button type="button" class="icon-btn archive-btn" title="Archive" aria-label="Archive">
+      <i class="bi bi-archive"></i>
+    </button>
+  </div>
+</div>
+
+      </div>
+    </section>
+    
+    <section class="lane" data-tab="2">
+      <div class="lane-header">
+        <h3 class="lane-title">In Progress <span class="lane-count" data-count-for="2">0</span></h3>
+        <button type="button" class="icon-btn edit" data-open-modal="addCardModal" data-lane="2" title="Add a card to In Progress" aria-label="Add a card to In Progress">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>
+      <div id="lane-2" class="lane-cards" data-lane="2">
+        
+      </div>
+    </section>
+    
+    <section class="lane" data-tab="3">
+      <div class="lane-header">
+        <h3 class="lane-title">Done <span class="lane-count" data-count-for="3">0</span></h3>
+        <button type="button" class="icon-btn edit" data-open-modal="addCardModal" data-lane="3" title="Add a card to Done" aria-label="Add a card to Done">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>
+      <div id="lane-3" class="lane-cards" data-lane="3">
+        
+      </div>
+    </section>
+    
+  </main>
+</div>
+
+<dialog class="modal" id="addCardModal" aria-labelledby="addCardTitle">
+  <div class="modal-dialog">
+    <form id="addCardForm" class="modal-content" hx-post="/b/main/card" hx-swap="none" hx-disabled-elt="find button[type=submit]">
+      <div class="modal-header">
+        <h5 id="addCardTitle">Add New Card</h5>
+        <button type="button" class="icon-btn" data-close-modal title="Close" aria-label="Close"><i class="bi bi-x"></i></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="lane" value="">
+        
+<label class="field">
+  <span>Title</span>
+  <input type="text" name="title" value="" placeholder="Card Title">
+</label>
+<label class="field">
+  <span>Description</span>
+  <textarea name="description" rows="3" placeholder="Description"></textarea>
+</label>
+<label class="field">
+  <span>Due date</span>
+  <input type="date" name="due" value="">
+</label>
+<div class="field">
+  <span>Subtasks</span>
+  <div class="subtasks-container">
+    
+  </div>
+  <button type="button" class="btn btn-muted add-subtask-btn"><i class="bi bi-plus"></i> Add Subtask</button>
+  <input type="hidden" name="subtasks" class="subtasks-hidden">
+</div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+        <button type="submit" class="btn btn-primary">Add Card</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<dialog class="modal" id="editCardModal" aria-label="Edit Card">
+  <div class="modal-dialog">
+    <div class="modal-content" id="editCardModalContent" tabindex="-1">
+      
+    </div>
+  </div>
+</dialog>
+
+<template id="subtask-row-template">
+<div class="subtask-row">
+  <input type="checkbox" class="subtask-complete" aria-label="Done">
+  <input type="text" class="subtask-text" value="" placeholder="Subtask description" aria-label="Subtask">
+  <button type="button" class="icon-btn danger remove-subtask-btn" title="Remove" aria-label="Remove subtask"><i class="bi bi-x"></i></button>
+</div>
+</template>
+
+<script src="/static/vendor/htmx/htmx.min.js?v=d5ee4d204c04"></script>
+<script src="/static/vendor/sortablejs/Sortable.min.js?v=d5ee4d204c04"></script>
+<script src="/static/app.js?v=d5ee4d204c04"></script>
+</body>
+</html>
