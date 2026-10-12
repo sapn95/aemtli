@@ -101,7 +101,8 @@ export default async function (ctx) {
 - `ctx.pdfText(bytes)` returns a PDF's text as `pdftotext -layout` lays it
   out (poppler is in the image), for lists and letters parsed in code.
 - `ctx.qr(bytes)` returns the text of the QR codes on a PDF's first eight
-  pages (`{ pages }` changes that) (`pdftoppm` draws them, `zbarimg` reads them; both are in the image).
+  pages (`{ pages }` changes that): `pdftoppm` draws them, and ZXing,
+  compiled to WebAssembly (`zxing-wasm`), reads them.
   `src/run/swissqr.mjs` reads a Swiss QR bill from that text and checks it
   the way a bank does, and `src/run/pain001.mjs` writes the bills into a
   pain.001.001.09 payment file (Swiss Payment Standards 2022, CHF), which

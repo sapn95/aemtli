@@ -10,7 +10,7 @@ export default [
       globals: {
         process: 'readonly', console: 'readonly', Buffer: 'readonly',
         fetch: 'readonly', URL: 'readonly', URLSearchParams: 'readonly', Response: 'readonly',
-        setTimeout: 'readonly', clearTimeout: 'readonly', structuredClone: 'readonly',
+        setTimeout: 'readonly', clearTimeout: 'readonly', structuredClone: 'readonly', Blob: 'readonly',
         AbortController: 'readonly', AbortSignal: 'readonly', WebSocket: 'readonly', Intl: 'readonly', setInterval: 'readonly', clearInterval: 'readonly', queueMicrotask: 'readonly',
       },
     },

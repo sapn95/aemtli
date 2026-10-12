@@ -37,10 +37,10 @@ jobs:
           cache: npm
       - name: install
         run: npm ci --ignore-scripts
-      # pdftotext and pdftoppm, and zbarimg, which the image has and
-      # ctx.pdfText and ctx.qr use; qrencode only draws the tests' QR codes.
-      - name: poppler, zbar and qrencode
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils zbar-tools qrencode
+      # pdftotext and pdftoppm, which the image has and ctx.pdfText and
+      # ctx.qr use; qrencode only draws the tests' QR codes.
+      - name: poppler and qrencode
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils qrencode
       - name: lint
         run: npm run lint
       - name: hygiene, being secrets, personal data and tracked state files

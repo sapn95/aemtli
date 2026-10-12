@@ -1,6 +1,6 @@
 {
   "name": "aemtli",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": true,
   "description": "Chores for goose: recipes on a Kubernetes schedule, a dashboard of their runs, and a chat, behind Cloudflare Access.",
   "type": "module",
@@ -27,7 +27,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
     "markdown-it": "^15.0.2",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zxing-wasm": "3.1.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,13 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runJob, zbarSymbols } from '../src/run/job.mjs';
+import { runJob } from '../src/run/job.mjs';
 import { qrPdf, blankPdf } from './fixtures/pdf.mjs';
+
+/** Two pages, a QR code on each. */
+const twoCodes = () => qrPdf('first code', 'second code');
 import { jobMeta } from '../src/run/meta.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
 import { createMcpClient } from '../src/run/mcp-client.mjs';
@@ -407,45 +410,42 @@ test('a job reads the QR code on a PDF and keeps a file with its run', async () 
   assert.match(logText, /refused not a type a run keeps: text\/html/);
 });
 
-test('zbarimg XML: text as it is, binary from base64', () => {
-  const xml = "<symbol><data><![CDATA[SPC\n0200]]></data></symbol><symbol><data format='base64' length='3'>aGk=</data></symbol>";
-  assert.deepEqual(zbarSymbols(xml), ['SPC\n0200', 'hi']);
-});
 
-test('the QR reader: a page it cannot read costs that page only, a huge PDF is refused, and a run keeps at most 20 files', async () => {
-  const pdf = qrPdf('SPC');
-  const bin = mkdtempSync(join(tmpdir(), 'aemtli-zbar-'));
-  // A zbarimg that reads one page and fails on another, as the real one does.
-  writeFileSync(join(bin, 'zbarimg'), "#!/bin/sh\nprintf \"<barcodes><data><![CDATA[SPC-part]]></data></barcodes>\"\nexit 1\n", { mode: 0o755 });
-  writeFileSync(join(bin, 'zbarimg-none'), '#!/bin/sh\necho broken >&2\nexit 1\n', { mode: 0o755 });
+test('the QR reader refuses a huge PDF, reads every page, and a run keeps at most 20 files', async () => {
   const { recipesDir, dataDir } = dirs({ limits: `export default async function (ctx) {
   const out = [];
-  out.push((await ctx.qr(Buffer.from(ctx.params.pdf, 'base64'))).join());
+  out.push((await ctx.qr(Buffer.from(ctx.params.pdf, 'base64'))).join('+'));
   try { await ctx.qr(Buffer.alloc(26 * 1024 * 1024)); } catch (err) { out.push(err.message); }
   try { for (let i = 0; i < 21; i++) ctx.attach('f' + i + '.txt', 'x'); } catch (err) { out.push(err.message); }
   ctx.attach('f0.txt', 'replaced, not a 21st');
   return out.join('\\n');
 }
-`, broken: `export default async ctx => ctx.qr(Buffer.from(ctx.params.pdf, 'base64'));
 ` });
-  const path = process.env.PATH;
-  process.env.PATH = `${bin}:${path}`;
-  try {
-    const run = await runJob({ name: 'limits', recipesDir, dataDir, params: { pdf: pdf.toString('base64') }, anthropic: null });
-    assert.equal(run.status, 'succeeded', run.error);
-    assert.deepEqual(read(dataDir, 'limits', run.id, 'result.md').trim().split('\n'), [
-      'SPC-part',
-      'a PDF of 27262976 bytes is over the 26214400 the QR reader takes',
-      'a run keeps at most 20 files',
-    ]);
-    assert.equal(run.files.length, 20);
-    assert.equal(readdirSync(join(dataDir, 'runs', 'limits', run.id, 'files')).length, 20, 'the refused 21st was never written');
-    assert.match(read(dataDir, 'limits', run.id, 'run.log'), /zbarimg could not read every page/);
-    copyFileSync(join(bin, 'zbarimg-none'), join(bin, 'zbarimg'));
-    const failed = await runJob({ name: 'broken', recipesDir, dataDir, params: { pdf: pdf.toString('base64') }, anthropic: null });
-    assert.equal(failed.status, 'failed');
-    assert.equal(failed.error, 'zbarimg could not read the pages');
-  } finally {
-    process.env.PATH = path;
-  }
+  const run = await runJob({ name: 'limits', recipesDir, dataDir, params: { pdf: twoCodes().toString('base64') }, anthropic: null });
+  assert.equal(run.status, 'succeeded', run.error);
+  assert.deepEqual(read(dataDir, 'limits', run.id, 'result.md').trim().split('\n'), [
+    'first code+second code',
+    'a PDF of 27262976 bytes is over the 26214400 the QR reader takes',
+    'a run keeps at most 20 files',
+  ]);
+  assert.equal(run.files.length, 20);
+  assert.equal(readdirSync(join(dataDir, 'runs', 'limits', run.id, 'files')).length, 20, 'the refused 21st was never written');
+});
+
+test('the QR reader loads from the package, never from a network', () => {
+  // A process in which any fetch fails: the reader must still read.
+  const script = `globalThis.fetch = () => { throw new Error('a network call was made'); };
+const { mkdtempSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+const { runJob } = await import(${JSON.stringify(new URL('../src/run/job.mjs', import.meta.url).href)});
+const { qrPdf } = await import(${JSON.stringify(new URL('./fixtures/pdf.mjs', import.meta.url).href)});
+const { writeFileSync, mkdirSync, readFileSync } = await import('node:fs');
+const root = mkdtempSync(join(tmpdir(), 'aemtli-offline-'));
+mkdirSync(join(root, 'r'));
+writeFileSync(join(root, 'r', 'q.mjs'), 'export default async ctx => (await ctx.qr(Buffer.from(ctx.params.pdf, "base64"))).join();');
+const run = await runJob({ name: 'q', recipesDir: join(root, 'r'), dataDir: join(root, 'd'), params: { pdf: qrPdf('offline').toString('base64') }, anthropic: null, fetchImpl: globalThis.fetch });
+console.log(run.status, readFileSync(join(root, 'd', 'runs', 'q', run.id, 'result.md'), 'utf8').trim(), run.error ?? '');`;
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim();
+  assert.equal(out, 'succeeded offline');
 });
