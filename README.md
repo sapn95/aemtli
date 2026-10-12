@@ -89,7 +89,9 @@ export default async function (ctx) {
   tokens on top of `maxTokens`. Tokens are counted into the run.
 - `ctx.mcp('<gateway>')` is an MCP client for a gateway named in
   `MCP_GATEWAYS`, with `tools()`, `call(name, args)` and `json(name, args)`.
-  Approvals apply as they do for agents.
+  Approvals apply as they do for agents. A gateway that is not up yet
+  (refused, or no address) is waited for, up to three minutes: gateways
+  restart with every image and install their server first.
 - `ctx.notify({ title, message })` sends one push through ntfy, for a run
   worth a look on a phone. It needs `NTFY_URL`, `NTFY_TOPIC` and
   `NTFY_TOKEN_FILE` in the run's pod; without them it says so in the log and
