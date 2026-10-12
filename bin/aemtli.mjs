@@ -7,10 +7,10 @@ import { runJob } from '../src/run/job.mjs';
 import { startServer } from '../src/web/server.mjs';
 import { createK8s } from '../src/web/k8s.mjs';
 import { createAccessVerifier } from '../src/web/auth.mjs';
-import { createAcpProxy } from '../src/web/acp-proxy.mjs';
+import { createChatBroker } from '../src/web/chats.mjs';
 import { startModelProxy } from '../src/proxy/model-proxy.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
-import { parseGateways, createGatewayClient, createNotifier } from '../src/web/approvals.mjs';
+import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const env = process.env;
@@ -118,12 +118,7 @@ async function web() {
     audience: required('CF_ACCESS_AUD'),
     allowedEmails: required('ALLOWED_EMAILS').split(',').map(s => s.trim()).filter(Boolean),
   });
-  const secret = env.GOOSE_SERVER__SECRET_KEY;
-  const proxy = secret ? createAcpProxy({
-    target: { host: env.GOOSE_SERVE_HOST ?? '127.0.0.1', port: Number(env.GOOSE_SERVE_PORT ?? 3284) },
-    secret,
-    allowedOrigin: publicOrigin,
-  }) : null;
+
   let gateways;
   try {
     gateways = createGatewayClient({ gateways: parseGateways(env.GATEWAYS, env.GATEWAY_TOKENS_DIR) });
@@ -131,6 +126,28 @@ async function web() {
     console.error(err.message);
     process.exit(2);
   }
+  let push = () => Promise.resolve(false);
+  if (env.NTFY_URL) {
+    const ntfy = new URL(env.NTFY_URL);
+    push = createPush({
+      ntfyUrl: ntfy.origin + ntfy.pathname.replace(/\/$/, ''),
+      topic: required('NTFY_TOPIC'),
+      token: readFileSync(required('NTFY_TOKEN_FILE'), 'utf8').trim(),
+      log,
+    });
+  }
+  // The chat broker holds the conversation with goose serve, so a turn goes
+  // on when the browser goes away. goose takes the secret as ?token=.
+  const secret = env.GOOSE_SERVER__SECRET_KEY;
+  const goose = `ws://${env.GOOSE_SERVE_HOST ?? '127.0.0.1'}:${Number(env.GOOSE_SERVE_PORT ?? 3284)}/acp?token=${encodeURIComponent(secret ?? '')}`;
+  const chats = secret ? createChatBroker({
+    connect: () => new WebSocket(goose),
+    cwd: env.CHAT_CWD ?? '/data/workspace',
+    mcpServers: gateways.mcpServers,
+    notify: push,
+    link: id => (publicOrigin ? `${publicOrigin}/chat#${encodeURIComponent(id)}` : undefined),
+    log,
+  }) : null;
   if (env.NTFY_URL) {
     if (!gateways.configured) log('NTFY_URL is set but there are no GATEWAYS to watch');
     const ntfy = new URL(env.NTFY_URL);
@@ -148,18 +165,17 @@ async function web() {
     k8s: createK8s(env.K8S_BASE_URL ? { baseUrl: env.K8S_BASE_URL, namespace: env.K8S_NAMESPACE, token: env.K8S_TOKEN } : undefined),
     dataDir: env.DATA_DIR ?? '/data',
     recipesDir: env.RECIPES_DIR ?? '/recipes',
-    chatCwd: env.CHAT_CWD ?? '/data/workspace',
     stateDir: env.STATE_DIR || null,
     timeZone,
     gateways,
     allowedOrigin: publicOrigin,
     verify,
-    proxy,
+    chats,
     version,
     log,
   }, { port: Number(env.PORT ?? 8080), host: env.HOST ?? '0.0.0.0' });
   const address = server.address();
-  log(`ämtli ${version} on ${address.address}:${address.port}, auth ${authMode}, chat ${proxy ? 'on' : 'off'}`);
+  log(`ämtli ${version} on ${address.address}:${address.port}, auth ${authMode}, chat ${chats ? 'on' : 'off'}`);
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.on(signal, () => {
       server.close(() => process.exit(0));

@@ -11,7 +11,7 @@ export default [
         process: 'readonly', console: 'readonly', Buffer: 'readonly',
         fetch: 'readonly', URL: 'readonly', URLSearchParams: 'readonly', Response: 'readonly',
         setTimeout: 'readonly', clearTimeout: 'readonly', structuredClone: 'readonly',
-        AbortController: 'readonly', AbortSignal: 'readonly', WebSocket: 'readonly', Intl: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
+        AbortController: 'readonly', AbortSignal: 'readonly', WebSocket: 'readonly', Intl: 'readonly', setInterval: 'readonly', clearInterval: 'readonly', queueMicrotask: 'readonly',
       },
     },
     rules: {
@@ -28,7 +28,7 @@ export default [
     files: ['public/**/*.js'],
     languageOptions: {
       sourceType: 'module',
-      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', fetch: 'readonly', console: 'readonly', localStorage: 'readonly' },
+      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', EventSource: 'readonly', window: 'readonly', setInterval: 'readonly', fetch: 'readonly', console: 'readonly', localStorage: 'readonly' },
     },
   },
   {

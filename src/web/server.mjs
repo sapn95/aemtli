@@ -60,12 +60,12 @@ function recipeMeta(recipesDir, name) {
 
 /**
  * Builds the request handlers. `deps`: k8s client, dataDir, recipesDir,
- * verify (Access verifier, or null for AUTH_MODE=none), proxy (ACP upgrade
- * handler), allowedOrigin, version, chatCwd (goose's working directory for
- * chat sessions), timeZone (for showing times), log, now.
+ * verify (Access verifier, or null for AUTH_MODE=none), chats (the chat
+ * broker, or null when there is no goose serve), allowedOrigin, version,
+ * timeZone (for showing times), gateways, stateDir, log, now.
  */
 export function createApp(deps) {
-  const { k8s, dataDir, recipesDir, verify, proxy, allowedOrigin, version, chatCwd = '/data/workspace', timeZone: displayZone = 'UTC', gateways = null, stateDir = null, log = console.log, now = () => new Date() } = deps;
+  const { k8s, dataDir, recipesDir, verify, allowedOrigin, version, timeZone: displayZone = 'UTC', gateways = null, stateDir = null, chats = null, log = console.log, now = () => new Date() } = deps;
 
   // The owner's favourite chores, on the web pod's own volume so a phone and a
   // laptop see the same stars. Without a state directory there are none.
@@ -186,9 +186,103 @@ export function createApp(deps) {
    */
   function sameOrigin(req) {
     const site = req.headers['sec-fetch-site'];
+    // Neither header to go by (no PUBLIC_ORIGIN, and a client that does not
+    // say where it posts from): refused, since nothing shows it is this page.
+    if (!site && !allowedOrigin) return false;
     return !((site && site !== 'same-origin') || (allowedOrigin && req.headers.origin !== allowedOrigin));
   }
   const crossSite = res => send(res, 403, 'application/json', JSON.stringify({ error: 'cross-site request refused' }));
+
+  const CHAT_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+  const sendJson = (res, status, body) => send(res, status, 'application/json', JSON.stringify(body));
+
+  /** A JSON body of at most 64 KB, or null. */
+  function jsonBody(req) {
+    return new Promise(resolve => {
+      let size = 0;
+      const chunks = [];
+      req.on('data', c => { size += c.length; if (size <= 65536) chunks.push(c); });
+      req.on('end', () => {
+        if (size > 65536) return resolve(null);
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+        } catch {
+          resolve(null);
+        }
+      });
+      req.on('error', () => resolve(null));
+    });
+  }
+
+  /**
+   * The chat: the conversations goose keeps, and for one of them a stream of
+   * what it shows plus the few things one can do to it. Everything that
+   * changes something is same-origin only.
+   */
+  async function chatApi(req, res, path) {
+    if (!chats) return sendJson(res, 404, { error: 'the chat is off: goose serve is not configured' });
+    if (req.method !== 'GET' && !sameOrigin(req)) return crossSite(res);
+    const [, , , id, action] = path.split('/');
+    try {
+      if (!id) {
+        if (req.method === 'GET') return sendJson(res, 200, { chats: await chats.list() });
+        if (req.method === 'POST') {
+          const body = await jsonBody(req);
+          return sendJson(res, 201, await chats.create(typeof body?.mode === 'string' ? body.mode : undefined));
+        }
+        return sendJson(res, 405, { error: 'GET or POST' });
+      }
+      if (!CHAT_ID.test(id)) return sendJson(res, 404, { error: 'no such conversation' });
+      if (req.method === 'DELETE' && !action) {
+        await chats.remove(id);
+        return sendJson(res, 200, { deleted: id });
+      }
+      if (req.method === 'GET' && action === 'events') {
+        let left = false;
+        let stop = () => {};
+        let beat = null;
+        req.on('close', () => { left = true; clearInterval(beat); stop(); });
+        // Loaded before the stream starts, so a conversation that is gone is
+        // a plain 404, which the browser does not retry, where an ended
+        // stream would be retried for ever.
+        await chats.open(id);
+        if (left) return undefined;
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          // No buffering on the way out, so each change arrives as it happens.
+          'x-accel-buffering': 'no',
+        });
+        stop = await chats.watch(id, res);
+        if (left) stop();
+        // A comment every 20 seconds keeps proxies from closing a quiet stream.
+        else beat = setInterval(() => res.write(': still here\n\n'), 20_000);
+        return undefined;
+      }
+      if (req.method === 'POST') {
+        const body = await jsonBody(req);
+        if (body === null) return sendJson(res, 400, { error: 'a JSON body of at most 64 KB' });
+        if (action === 'say') {
+          if (typeof body.text !== 'string' || !body.text.trim()) return sendJson(res, 400, { error: 'text is empty' });
+          await chats.say(id, body.text);
+          return sendJson(res, 202, { ok: true });
+        }
+        if (action === 'stop') { await chats.stop(id); return sendJson(res, 200, { ok: true }); }
+        if (action === 'answer') { chats.answer(id, String(body.option ?? '')); return sendJson(res, 200, { ok: true }); }
+        if (action === 'mode') {
+          if (!['auto', 'approve', 'smart_approve', 'chat'].includes(body.mode)) return sendJson(res, 400, { error: 'unknown mode' });
+          await chats.mode(id, body.mode);
+          return sendJson(res, 200, { ok: true });
+        }
+      }
+      return sendJson(res, 404, { error: 'not found' });
+    } catch (err) {
+      if (res.headersSent) return res.end();
+      log(`chat ${id ?? ''}: ${err.message}`);
+      return sendJson(res, err.status ?? 502, { error: err.status ? err.message : 'goose did not answer' });
+    }
+  }
 
   async function runNow(req, res, name) {
     if (!sameOrigin(req)) return crossSite(res);
@@ -218,11 +312,12 @@ export function createApp(deps) {
       const needs = gateways?.configured ? await gateways.pending() : NONE;
       return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, now: now(), needs }));
     }
-    if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(chatCwd, gateways?.mcpServers ?? []), 'chat.js', 'chat');
+    if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(Boolean(chats)), chats ? 'chat.js' : 'app.js', 'chat');
     if (req.method === 'GET' && path === '/approvals') {
       const all = gateways?.configured ? await gateways.all() : NONE;
       return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone), 'app.js', 'approvals');
     }
+    if (path === '/api/chats' || path.startsWith('/api/chats/')) return chatApi(req, res, path);
     const star = path.match(/^\/api\/favorites\/([^/]+)\/(on|off)$/);
     if (req.method === 'POST' && star) {
       if (!sameOrigin(req)) return crossSite(res);
@@ -288,19 +383,14 @@ export function createApp(deps) {
       }
     },
 
-    /** The 'upgrade' handler: /acp only, and only after the same identity check. */
-    async upgrade(req, socket, head) {
+    /**
+     * The 'upgrade' handler: there is nothing to upgrade to any more. The
+     * browser no longer speaks to goose; the chat broker does.
+     */
+    upgrade(req, socket) {
       socket.on('error', () => socket.destroy());
-      const refuse = () => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      let path;
-      try {
-        path = new URL(req.url, 'http://ui').pathname;
-      } catch {
-        return refuse();
-      }
-      const user = path === '/acp' ? await identify(req) : null;
-      if (!user || !proxy) return refuse();
-      return proxy(req, socket, head);
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      return Promise.resolve();
     },
   };
 }

@@ -15,7 +15,7 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `aemtli run <recipe>` | What a CronJob runs for an agent's chore. Starts `goose run --recipe`, waits, and writes `run.json`, `result.md` and `run.log` to the shared volume. Exit 0 only if a model actually answered. |
 | `aemtli job <name>` | What a CronJob runs for a chore that code can do. Runs `<name>.mjs`, which asks the model only where judgement is needed, through the model proxy and a small model by default. Recorded like a goose run. |
 | `aemtli web` | The dashboard, the run pages, and the chat. One row per chore: its name, its schedule in words ("Weekdays at 07:00"), this week as seven marks (a tick for each run, a red cross where one failed, an empty box where a slot passed without a run, a ring for what is still due), when it runs next, what came of the last run, and "Run now". On a wide screen the rows line up under one row of day names and read as the chart they are; on a phone each row stacks and the marks carry their own day letters. A run page shows the answer rendered from Markdown. |
-| `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. |
+| `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. It keeps every conversation, so the chat has a history. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
 | `aemtli mcp-gateway` | Serves one MCP server to the agents, in a pod that alone holds that server's credentials. Calls the owner has to approve are held until they decide in the UI. |
 
@@ -25,7 +25,7 @@ One image holds all five: goose, node and npm (for MCP servers started with
 ```text
 browser ─▶ Cloudflare Access ─▶ tunnel ─▶ aemtli-web ─┬─▶ Kubernetes API (CronJobs, Jobs)
                                                        ├─▶ volume aemtli-runs (read)
-                                                       └─▶ /acp ─▶ aemtli-goose ─▶ aemtli-model-proxy ─▶ model API
+                                                       └─▶ chat broker ═ACP═▶ aemtli-goose ─▶ aemtli-model-proxy ─▶ model API
 CronJob ─▶ aemtli run <recipe> ─▶ goose run ─────────────────────▶ aemtli-model-proxy ─▶ model API
                                 └─▶ volume aemtli-runs (write)
 goose serve keeps its settings and sessions on volume aemtli-goose.
@@ -49,6 +49,21 @@ Two things goose does that the runner works around:
 - A tool a person chose to "always allow" in the chat is remembered in
   `/data/goose/config/goose/permission.yaml` in the goose pod. Delete the
   line to be asked again.
+
+## The chat
+
+The web server, not the browser, holds the conversation with goose. A turn
+goes on when the phone locks or the page closes; a question goose asks
+before a tool waits until it is answered, from any device, and a push says
+that it waits. When nobody is watching, another push says that the answer is
+there. The page lists the conversations goose keeps (it stores them on
+`aemtli-goose`), opens one by replaying it, and follows it through a stream
+of server-sent events that the browser picks up again by itself after a
+dropped connection.
+
+`/api/chats` lists them and starts one; `/api/chats/<id>/events` is the
+stream; `say`, `stop`, `answer` and `mode` change a conversation, from this
+origin only.
 
 ## Jobs: code first, the model where it pays
 
@@ -148,8 +163,9 @@ extensions:
   RS256 only, signed by the team's current keys, for this application's AUD,
   not expired, and for an address in `ALLOWED_EMAILS`. A request that reached
   the pod some other way still gets a 403.
-- **Cross-site.** "Run now" accepts only same-origin requests, and the chat
-  WebSocket only the configured origin.
+- **Cross-site.** "Run now", the decisions on held calls and everything that
+  changes a conversation accept only same-origin requests. The browser has
+  no connection to goose at all; only the web pod does.
 - **The agent.** goose has a shell, in the chat and in every run, and a
   recipe that reads the internet can be talked into using it. So:
   - The model key is not in its environment. Only `aemtli-model-proxy` has

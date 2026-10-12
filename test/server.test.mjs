@@ -7,6 +7,8 @@ import { request } from 'node:http';
 import { connect } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { startServer } from '../src/web/server.mjs';
+import { createChatBroker } from '../src/web/chats.mjs';
+import { fakeGoose } from './fixtures/fake-goose-acp.mjs';
 import { createRunDir, writeJsonAtomic } from '../src/store/runs.mjs';
 
 const ORIGIN = 'https://chores.example';
@@ -35,7 +37,7 @@ function fakeK8s({ running = false, fail = false, schedule = '13 8 * * 1', creat
 }
 
 /** Starts the UI against temp dirs; `body` gets a request helper. */
-async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, stateDir = true, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
+async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, stateDir = true, chats = null, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aemtli-ui-'));
   const recipesDir = join(root, 'recipes');
   const dataDir = join(root, 'data');
@@ -50,7 +52,7 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
     writeJsonAtomic(join(createRunDir(dataDir, 'hello', id), 'run.json'), { recipe: 'hello', id, status: 'succeeded', trigger, startedAt, durationMs: 1000 });
   }
   const lines = [];
-  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
+  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, chats, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
   const port = server.address().port;
   /** One request; `token` null means no Access header. */
   const call = (path, { method = 'GET', token = 'good', headers = {} } = {}) => new Promise((resolve, reject) => {
@@ -219,12 +221,88 @@ test('static files are served from the list, nothing else', () =>
     assert.equal((await call('/static/server.mjs')).status, 404);
   }));
 
-test('the chat page carries goose\'s working directory', () =>
+test('without goose serve the chat page says so, and the chat API is off', () =>
   withUi(async ({ call }) => {
     const res = await call('/chat');
-    assert.match(res.body, /data-cwd="\/data\/workspace"/);
-    assert.match(res.body, /\/static\/chat\.js/);
+    assert.match(res.body, /The chat is off/);
+    assert.doesNotMatch(res.body, /chat\.js/);
+    assert.equal((await call('/api/chats')).status, 404);
   }));
+
+test('the chat API: conversations, a stream, and changes from this origin only', async () => {
+  const chats = createChatBroker({ connect: fakeGoose().connect, cwd: '/w' });
+  await withUi(async ({ call, port }) => {
+    const page = await call('/chat');
+    assert.match(page.body, /<ul id="chats" class="chats-list">/);
+    assert.match(page.body, /\/static\/chat\.js\?v=/);
+    const same = { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+    assert.equal((await call('/api/chats', { method: 'POST', headers: { origin: 'https://evil.example' } })).status, 403);
+    const made = await post(port, '/api/chats', { mode: 'approve' }, same);
+    assert.equal(made.status, 201);
+    const { id } = JSON.parse(made.body);
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: 'Hoi' }, { ...same, origin: 'https://evil.example' })).status, 403);
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: '  ' }, same)).status, 400);
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: 'Hoi' }, same)).status, 202);
+    assert.equal((await post(port, `/api/chats/${id}/mode`, { mode: 'yolo' }, same)).status, 400);
+    assert.equal((await post(port, `/api/chats/${id}/answer`, { option: 'x' }, same)).status, 409, 'no question waits');
+    assert.equal((await call('/api/chats/..%2Fx/events')).status, 404);
+    const list = JSON.parse((await call('/api/chats')).body);
+    assert.deepEqual(list.chats.map(c => c.id), [id]);
+    // The stream: a snapshot first, with what was said.
+    const first = await new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, path: `/api/chats/${id}/events`, headers: { 'cf-access-jwt-assertion': 'good' } }, res => {
+        assert.match(res.headers['content-type'], /^text\/event-stream/);
+        res.setEncoding('utf8');
+        res.once('data', d => { resolve(JSON.parse(d.replace(/^data: /, ''))); req.destroy(); });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(first.kind, 'snapshot');
+    assert.deepEqual(first.events.map(e => e.type), ['user', 'agent']);
+    // Every change, from another site, refused before it reaches goose.
+    const evil = { ...same, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' };
+    for (const [method, path] of [['POST', '/api/chats'], ['POST', `/api/chats/${id}/say`], ['POST', `/api/chats/${id}/stop`], ['POST', `/api/chats/${id}/answer`], ['POST', `/api/chats/${id}/mode`], ['DELETE', `/api/chats/${id}`]]) {
+      assert.equal((await call(path, { method, headers: evil })).status, 403, `${method} ${path}`);
+    }
+    assert.ok(chats.chats.has(id), 'not deleted');
+  }, { chats });
+  chats.close();
+});
+
+test('a stream that closes stops watching; one for a conversation that is gone is a 404', async () => {
+  const chats = createChatBroker({ connect: fakeGoose().connect, cwd: '/w' });
+  await withUi(async ({ call, port }) => {
+    const { id } = await chats.create();
+    await new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, path: `/api/chats/${id}/events`, headers: { 'cf-access-jwt-assertion': 'good' } }, res => {
+        res.once('data', () => { req.destroy(); resolve(); });
+      });
+      req.on('close', resolve);
+      req.on('error', reject);
+      req.end();
+    });
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(chats.chats.get(id).watchers.size, 0);
+    const missing = await call('/api/chats/nope/events');
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers['content-type'], /^application\/json/);
+  }, { chats });
+  chats.close();
+});
+
+/** A POST with a JSON body. */
+function post(port, path, body, headers) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'cf-access-jwt-assertion': 'good', ...headers } }, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.end(JSON.stringify(body));
+  });
+}
 
 test('a failing cluster API is a 500 with the detail in the log only', () =>
   withUi(async ({ call, lines }) => {
@@ -241,20 +319,12 @@ test('AUTH_MODE=none lets requests in as "local"', () =>
     assert.match(res.body, /local/);
   }, { verify: null }));
 
-test('/acp upgrades only with a token and a proxy, other paths never', async () => {
-  const proxied = [];
-  const proxy = (req, socket) => { proxied.push(req.url); socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'); };
-  const upgrade = { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': randomBytes(16).toString('base64') };
-  await withUi(async ({ call }) => {
-    assert.equal((await call('/acp', { token: null, headers: upgrade })).status, 403);
+test('nothing upgrades: the browser no longer talks to goose', () =>
+  withUi(async ({ call }) => {
+    const upgrade = { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': randomBytes(16).toString('base64') };
+    assert.equal((await call('/acp', { headers: upgrade })).status, 403);
     assert.equal((await call('/other', { headers: upgrade })).status, 403);
-    assert.equal((await call('/acp', { headers: upgrade })).status, 101);
-    assert.deepEqual(proxied, ['/acp']);
-  }, { proxy });
-  await withUi(async ({ call }) => {
-    assert.equal((await call('/acp', { headers: upgrade })).status, 403, 'no proxy, no chat');
-  });
-});
+  }));
 
 test('a malformed request target is refused, on plain requests and upgrades, and the server stays up', () =>
   withUi(async ({ call, port }) => {

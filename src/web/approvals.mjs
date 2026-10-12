@@ -166,3 +166,25 @@ export function createNotifier({ client, ntfyUrl, topic, token, stateFile, click
     },
   };
 }
+
+/**
+ * A push through ntfy, published as JSON so a title keeps its umlauts.
+ * Resolves to true when it went out; never throws.
+ */
+export function createPush({ ntfyUrl, topic, token, log = console.log, fetchImpl = fetch }) {
+  return async ({ title, message, click, tags = 'speech_balloon' }) => {
+    try {
+      const res = await fetchImpl(ntfyUrl, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ topic, title: String(title).slice(0, 120), message: String(message).slice(0, 2000), tags: [tags], ...(click ? { click } : {}) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
+      return true;
+    } catch (err) {
+      log(`could not push: ${err.message}`);
+      return false;
+    }
+  };
+}
