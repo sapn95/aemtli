@@ -206,12 +206,12 @@ test('two changes to one card at once run one after the other', async () => {
     return new Response(page('card-created.html'));
   };
   const kanban = createKanban({ baseUrl: 'http://k', fetchImpl });
-  const both = Promise.all([kanban.updateCard(1, { title: 'A' }), kanban.setSubtask(1, 0, true), kanban.updateCard(2, { title: 'other card' }).catch(() => {})]);
+  const both = Promise.all([kanban.updateCard(1, { title: 'A' }), kanban.setSubtask(1, 0, true), kanban.archiveCard(1), kanban.updateCard(2, { title: 'other card' }).catch(() => {})]);
   await new Promise(r => setTimeout(r, 10));
   release();
   await both;
   const one = order.filter(o => o.includes('/card/1/'));
-  assert.deepEqual(one, ['GET /card/1/edit', 'POST /card/1/update', 'GET /card/1/edit', 'POST /card/1/subtask']);
+  assert.deepEqual(one, ['GET /card/1/edit', 'POST /card/1/update', 'GET /card/1/edit', 'POST /card/1/subtask', 'POST /card/1/archive']);
   assert.equal(order[1], 'GET /card/2/edit', 'another card does not wait');
   // A failed change does not hold up the next.
   const failing = createKanban({ baseUrl: 'http://k', fetchImpl: async () => new Response('down', { status: 500 }) });

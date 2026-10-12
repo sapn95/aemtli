@@ -87,3 +87,13 @@ test('fields not given are not sent', async () => {
   await jobCards(k.client).ensure('x', { title: 'Nur Titel' });
   assert.deepEqual(k.calls.find(([n]) => n === 'kanban_create_card')[1], { board: 'aemtli', title: 'Nur Titel', description: '[ämtli:x]' });
 });
+
+test('a board that did not answer is asked again by the next call', async () => {
+  const k = fakeKanban({ boards: ['Ämtli'] });
+  let down = true;
+  const client = { json: async (name, args) => { if (name === 'kanban_create_board' && down) throw new Error('kanban_create_board: fetch failed'); return k.client.json(name, args); } };
+  const cards = jobCards(client);
+  await assert.rejects(cards.ensure('a', { title: 'A' }), /fetch failed/);
+  down = false;
+  assert.equal((await cards.ensure('a', { title: 'A' })).created, true);
+});

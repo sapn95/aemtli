@@ -18,6 +18,10 @@ export function jobCards(client, { board = 'Ämtli', log = () => {} } = {}) {
   const slug = () => (ready ??= client.json('kanban_create_board', { name: board }).then(b => {
     if (b.created) log(`kanban: made the board ${b.name}`);
     return b.slug;
+  }, err => {
+    // A board that did not answer is asked again by the next call.
+    ready = null;
+    throw err;
   }));
 
   /**
