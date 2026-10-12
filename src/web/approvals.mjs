@@ -7,7 +7,9 @@ const NAME = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
 
 /**
  * Reads GATEWAYS, a JSON list of {name, title, url}, and each gateway's
- * token from `<tokensDir>/<name>`. Throws on anything malformed.
+ * token from `<tokensDir>/<name>`, or from its own `tokenFile` when it has
+ * one (a gateway added later, whose token is a Secret of its own). Throws on
+ * anything malformed.
  */
 export function parseGateways(spec, tokensDir, read = path => readFileSync(path, 'utf8')) {
   if (!spec) return [];
@@ -18,7 +20,7 @@ export function parseGateways(spec, tokensDir, read = path => readFileSync(path,
     throw new Error('GATEWAYS must be JSON: [{"name":"epost","title":"ePost","url":"http://aemtli-mcp-epost:8081"}]');
   }
   if (!Array.isArray(list)) throw new Error('GATEWAYS must be a JSON list');
-  if (list.length && !tokensDir) throw new Error('GATEWAY_TOKENS_DIR is required with GATEWAYS');
+  if (list.some(g => !g?.tokenFile) && !tokensDir) throw new Error('GATEWAY_TOKENS_DIR is required with GATEWAYS');
   const seen = new Set();
   return list.map(g => {
     if (!g || !NAME.test(g.name ?? '') || seen.has(g.name)) throw new Error(`gateway names must be unique and lower case: ${JSON.stringify(g?.name)}`);
@@ -26,13 +28,14 @@ export function parseGateways(spec, tokensDir, read = path => readFileSync(path,
     const url = new URL(g.url);
     const mcp = g.mcp ? new URL(g.mcp) : null;
     if (![url, mcp].every(u => !u || ['http:', 'https:'].includes(u.protocol))) throw new Error(`gateway ${g.name}: http or https only`);
+    if (g.tokenFile !== undefined && !(typeof g.tokenFile === 'string' && g.tokenFile.startsWith('/'))) throw new Error(`gateway ${g.name}: tokenFile must be an absolute path`);
     return {
       name: g.name,
       title: String(g.title ?? g.name),
       url: url.origin,
       // Where agents reach the gateway; the chat hands it to goose per session.
       ...(mcp ? { mcp: mcp.href } : {}),
-      token: read(`${tokensDir}/${g.name}`).trim(),
+      token: read(g.tokenFile ?? `${tokensDir}/${g.name}`).trim(),
     };
   });
 }

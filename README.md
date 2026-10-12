@@ -18,8 +18,9 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. It keeps every conversation, so the chat has a history. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
 | `aemtli mcp-gateway` | Serves one MCP server to the agents, in a pod that alone holds that server's credentials. Calls the owner has to approve are held until they decide in the UI. |
+| `aemtli mcp-kanban` | The kanban board ([golang-kanban](https://github.com/NicolasHaas/golang-kanban) v2) as MCP tools on stdio, for a gateway to run. See [The kanban board](#the-kanban-board). |
 
-One image holds all five: goose, node and npm (for MCP servers started with
+One image holds all six: goose, node and npm (for MCP servers started with
 `npx`), uv and python (for `uvx`), and the app.
 
 ```text
@@ -95,6 +96,11 @@ export default async function (ctx) {
   returns false, and a refused push never fails the run.
 - `ctx.pdfText(bytes)` returns a PDF's text as `pdftotext -layout` lays it
   out (poppler is in the image), for lists and letters parsed in code.
+- `ctx.cards({ board })` keeps cards on the kanban board for what waits for
+  the owner, through the gateway named `kanban`. `ensure(ref, { title,
+  description, due, subtasks, column })` adds a card once per reference,
+  and `done(ref)` moves it to the board's last column. The board (`Ämtli`
+  unless named) is made on first use.
 - `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
   new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
 
@@ -195,6 +201,36 @@ extensions:
 - Every page is server-rendered with escaping, behind a Content-Security-Policy
   that allows only this origin's scripts and styles.
 
+## The kanban board
+
+Upstream golang-kanban v2 has no API: a person posts forms and reads pages.
+`aemtli mcp-kanban` does the same from inside the cluster, so goose and the
+jobs can read the board and keep cards on it:
+
+| Tool | |
+| --- | --- |
+| `kanban_list_boards`, `kanban_read_board`, `kanban_get_card`, `kanban_search` | read |
+| `kanban_create_card`, `kanban_update_card`, `kanban_move_card`, `kanban_set_subtask` | change cards; an update keeps every field it is not given |
+| `kanban_archive_card`, `kanban_restore_card` | archive and undo it |
+| `kanban_create_board` | add a board, or get the one with that name |
+
+There is no tool to delete a card, a column or a board; that stays in the
+browser.
+
+The pages are read as the commit the cluster runs renders them, and the tests
+read pages recorded from that commit (`test/fixtures/kanban`). Record them
+again when the board moves to another commit.
+
+The board refuses a cross-site browser post. A request from a server carries
+no `Sec-Fetch-Site` and no `Origin`, so the gateway's posts go through; the
+board's NetworkPolicy is what decides who may reach it. A board that reads
+the signed-in user from a header (upstream's `AUTH_HEADER`) gets
+`KANBAN_AS` in the header `KANBAN_USER_HEADER` on every request.
+
+A job finds its cards again by a reference at the end of the description,
+`[ämtli:<ref>]`. A card the owner archived counts as dealt with and is not
+made again.
+
 ## Settings
 
 `aemtli web`:
@@ -212,7 +248,7 @@ extensions:
 | `CHAT_CWD` | `/data/workspace` | goose's working directory for chat sessions |
 | `DISPLAY_TIME_ZONE` | `UTC` | the zone the dashboard shows times and weeks in, e.g. `Europe/Zurich` |
 | `GATEWAYS` | | JSON: `[{"name":"epost","title":"ePost","url":"http://aemtli-mcp-epost:8081","mcp":"http://aemtli-mcp-epost:8080/mcp"}]`. `url` is the approvals port; with `mcp`, every chat session gets the gateway as a tool server |
-| `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token |
+| `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token. A gateway with `"tokenFile": "/abs/path"` in `GATEWAYS` reads its token from there instead |
 | `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | where held calls are pushed; without `NTFY_URL`, no pushes |
 | `NOTIFY_STATE_FILE` | `$DATA_DIR/notified.json` | which held calls were pushed already |
 | `STATE_DIR` | | where the UI keeps the favourite chores; without it there are none |
@@ -222,6 +258,10 @@ extensions:
 (`/state`), `PORT` (8080, for agents), `ADMIN_PORT` (8081, for the UI). Every
 other variable passes through to the MCP server, which is how it gets its
 credentials.
+
+`aemtli mcp-kanban`: `KANBAN_URL` (the board inside the cluster, e.g.
+`http://kanban.kanban.svc.cluster.local:17808`), and for a board that reads
+the user from a header, `KANBAN_AS` and `KANBAN_USER_HEADER`.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),

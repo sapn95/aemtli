@@ -3,6 +3,8 @@
 // directory and calls its default export with a context:
 //
 //   ctx.mcp('epost')         an MCP client for a gateway (approvals still apply)
+//   ctx.cards()              cards on the kanban board for what waits for the
+//                            owner, through the kanban gateway (see cards.mjs)
 //   ctx.ask({ prompt, ... }) one message to the model through the model proxy;
 //                            a small model by default, tokens counted
 //   ctx.notify({...})        one push through ntfy, when the run is worth a
@@ -25,6 +27,7 @@ import { pathToFileURL } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME } from '../store/runs.mjs';
 import { createMcpClient } from './mcp-client.mjs';
+import { jobCards } from './cards.mjs';
 
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
 const THINKING_ROOM = 2048;
@@ -146,6 +149,10 @@ export async function runJob({
       const client = createMcpClient(url, { fetchImpl });
       clients.push(client);
       return client;
+    },
+    /** Cards on the board `board` (Ämtli unless named), one per reference. */
+    cards({ board } = {}) {
+      return jobCards(ctx.mcp('kanban'), { board, log });
     },
     /**
      * Asks the model once and resolves with its text. `maxTokens` is the room

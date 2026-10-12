@@ -10,6 +10,8 @@ import { createAccessVerifier } from '../src/web/auth.mjs';
 import { createChatBroker } from '../src/web/chats.mjs';
 import { startModelProxy } from '../src/proxy/model-proxy.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
+import { createKanban, kanbanTools } from '../src/mcp/kanban.mjs';
+import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -42,6 +44,7 @@ const USAGE = `ämtli ${version}
   aemtli web                                   serve the dashboard and the chat
   aemtli model-proxy                           put the model key on requests goose makes
   aemtli mcp-gateway                           serve one MCP server to the agents, holding calls for approval
+  aemtli mcp-kanban                            the kanban board as an MCP server on stdio, for a gateway
 
 Settings come from the environment; see the README.`;
 
@@ -244,12 +247,28 @@ async function mcpGateway() {
   }
 }
 
+/**
+ * `aemtli mcp-kanban`: the board at KANBAN_URL as MCP tools on stdio. A
+ * gateway runs it; stdout is the protocol, so nothing else may go there.
+ */
+async function mcpKanban() {
+  let kanban;
+  try {
+    kanban = createKanban({ baseUrl: required('KANBAN_URL'), as: env.KANBAN_AS, userHeader: env.KANBAN_USER_HEADER });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  await serveStdio({ name: 'aemtli-kanban', version, tools: kanbanTools(kanban) });
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'job') await job(rest);
 else if (command === 'web') await web();
 else if (command === 'model-proxy') await modelProxy();
 else if (command === 'mcp-gateway') await mcpGateway();
+else if (command === 'mcp-kanban') await mcpKanban();
 else {
   console.log(USAGE);
   process.exit(command === '--help' || command === undefined ? 0 : 2);
