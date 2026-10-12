@@ -333,6 +333,9 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat-item .meta.waiting { color: var(--redpen); font-weight: 600; }
 .chat-main { min-width: 0; }
 .chat-main .chat-bar { margin-top: 0; }
+.chat-item.archived .title { color: var(--pencil); }
+.quiet-button.danger { color: var(--redpen); }
+.show-archived { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; color: var(--pencil); font-size: 0.875rem; }
 
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; margin-top: 1rem; }
 .chat-bar h1 { margin: 0 auto 0 0; font-size: 1.75rem; }

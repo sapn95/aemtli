@@ -321,6 +321,7 @@ export function chatPage(on = true) {
 <aside class="chat-side" aria-label="Conversations">
   <button type="button" id="new" class="quiet-button">New conversation</button>
   <ul id="chats" class="chats-list"></ul>
+  <label class="show-archived"><input type="checkbox" id="show-archived"> Show archived</label>
 </aside>
 <div class="chat-main">
   <div class="chat-bar">
@@ -333,6 +334,8 @@ export function chatPage(on = true) {
         <option value="chat">no tools at all</option>
       </select>
     </label>
+    <button type="button" id="archive" class="quiet-button" disabled>Archive</button>
+    <button type="button" id="delete" class="quiet-button danger" disabled>Delete</button>
   </div>
   <p id="state" class="state" role="status">Pick a conversation or start one.</p>
   <div id="log" class="chat" aria-live="polite"></div>

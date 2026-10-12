@@ -15,12 +15,17 @@ const cancel = document.getElementById('cancel');
 const mode = document.getElementById('mode');
 const state = document.getElementById('state');
 const fresh = document.getElementById('new');
+const showArchived = document.getElementById('show-archived');
+const archiveButton = document.getElementById('archive');
+const deleteButton = document.getElementById('delete');
 const heading = document.getElementById('chat-title');
 
 let current = null;
 let stream = null;
 let events = [];
 let status = 'idle';
+// Which conversations are put away, as the last listing said.
+let away = new Set();
 
 const STATE_WORDS = { idle: 'Ready.', running: 'goose is working. You can close the page; it keeps going.', waiting: 'goose asks before going on.' };
 const OPTION_LABELS = { allow_once: 'Allow once', allow_always: 'Always allow', reject_once: 'Reject', reject_always: 'Always reject' };
@@ -44,6 +49,14 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+/** The two buttons that act on the conversation that is open. */
+function showActions(title) {
+  archiveButton.disabled = !current;
+  deleteButton.disabled = !current;
+  archiveButton.textContent = current && away.has(current) ? 'Put back' : 'Archive';
+  deleteButton.dataset.title = title ?? '';
+}
+
 /** The list of conversations, newest first; the open one marked. */
 async function refreshList() {
   let chats;
@@ -53,26 +66,31 @@ async function refreshList() {
     state.textContent = `The conversations could not be listed: ${err.message}`;
     return;
   }
-  list.replaceChildren(...chats.map(c => {
+  away = new Set(chats.filter(c => c.archived).map(c => c.id));
+  showArchived.parentElement.hidden = !away.size;
+  showArchived.parentElement.lastChild.textContent = away.size === 1 ? ' Show 1 archived' : ` Show ${away.size} archived`;
+  showActions(chats.find(c => c.id === current)?.title);
+  const shown = chats.filter(c => !away.has(c.id) || showArchived.checked || c.id === current);
+  list.replaceChildren(...shown.map(c => {
     const li = document.createElement('li');
     const a = document.createElement('a');
     a.href = `#${encodeURIComponent(c.id)}`;
-    a.className = `chat-item${c.id === current ? ' open' : ''}`;
+    a.className = `chat-item${c.id === current ? ' open' : ''}${c.archived ? ' archived' : ''}`;
     if (c.id === current) a.setAttribute('aria-current', 'true');
     const title = document.createElement('span');
     title.className = 'title';
     title.textContent = c.title || 'Untitled';
     const meta = document.createElement('span');
     meta.className = `meta ${c.status}`;
-    meta.textContent = c.status === 'running' ? 'working' : c.status === 'waiting' ? 'asks you' : ago(c.updatedAt);
+    meta.textContent = c.status === 'running' ? 'working' : c.status === 'waiting' ? 'asks you' : `${c.archived ? 'archived · ' : ''}${ago(c.updatedAt)}`;
     a.append(title, meta);
     li.append(a);
     return li;
   }));
-  if (!chats.length) {
+  if (!shown.length) {
     const li = document.createElement('li');
     li.className = 'quiet';
-    li.textContent = 'No conversations yet.';
+    li.textContent = chats.length ? 'Nothing but archived conversations.' : 'No conversations yet.';
     list.append(li);
   }
 }
@@ -152,6 +170,7 @@ function open(id) {
   events = [];
   log.replaceChildren();
   mode.disabled = !id;
+  showActions();
   if (!id) {
     heading.textContent = 'Chat with goose';
     state.textContent = 'Pick a conversation or start one.';
@@ -246,6 +265,36 @@ fresh.addEventListener('click', () => {
   input.focus();
   refreshList();
 });
+
+archiveButton.addEventListener('click', async () => {
+  if (!current) return;
+  archiveButton.disabled = true;
+  try {
+    await api(`/api/chats/${encodeURIComponent(current)}/archive`, { method: 'POST', body: { archived: !away.has(current) } });
+    await refreshList();
+  } catch (err) {
+    state.textContent = `Not changed: ${err.message}`;
+    archiveButton.disabled = false;
+  }
+});
+
+deleteButton.addEventListener('click', async () => {
+  if (!current) return;
+  const what = deleteButton.dataset.title || 'this conversation';
+  if (!window.confirm(`Delete “${what}”? The whole conversation goes, at goose as well, and that cannot be undone.`)) return;
+  deleteButton.disabled = true;
+  try {
+    await api(`/api/chats/${encodeURIComponent(current)}`, { method: 'DELETE' });
+    location.hash = '';
+    open(null);
+    await refreshList();
+  } catch (err) {
+    state.textContent = `Not deleted: ${err.message}`;
+    deleteButton.disabled = false;
+  }
+});
+
+showArchived.addEventListener('change', refreshList);
 
 window.addEventListener('hashchange', () => {
   const id = decodeURIComponent(location.hash.slice(1));

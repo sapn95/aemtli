@@ -64,9 +64,18 @@ dropped connection. goose's answers arrive as HTML that the server draws from
 their Markdown with the same rules as a run's result: no raw HTML, no script
 links, no images loaded.
 
+A conversation can be put away or deleted from the list. Archived ones are
+hidden until the page asks for them; where they are kept is ämtli's own
+business, because goose has no archive over ACP. Deleting one deletes it at
+goose, and that cannot be undone.
+
+A conversation keeps the tool servers it was made with: goose stores them
+per session, so a gateway added afterwards shows up in new conversations,
+not in old ones.
+
 `/api/chats` lists them and starts one; `/api/chats/<id>/events` is the
-stream; `say`, `stop`, `answer` and `mode` change a conversation, from this
-origin only.
+stream; `say`, `stop`, `answer`, `mode` and `archive` change a conversation,
+and `DELETE` removes it, from this origin only.
 
 ## Jobs: code first, the model where it pays
 
@@ -266,7 +275,7 @@ made again.
 | `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token. A gateway with `"tokenFile": "/abs/path"` in `GATEWAYS` reads its token from there instead |
 | `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | where held calls are pushed; without `NTFY_URL`, no pushes |
 | `NOTIFY_STATE_FILE` | `$DATA_DIR/notified.json` | which held calls were pushed already |
-| `STATE_DIR` | | where the UI keeps the favourite chores; without it there are none |
+| `STATE_DIR` | | where the UI keeps the favourite chores and which conversations are archived; without it there are neither |
 
 `aemtli mcp-gateway`: `MCP_COMMAND` (the server's argv as JSON),
 `POLICY_FILE`, `ADMIN_TOKEN_FILE` (at least 16 characters), `STATE_DIR`
