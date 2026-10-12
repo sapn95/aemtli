@@ -187,11 +187,10 @@ test('a job can push once through ntfy, and a run without the settings says so',
     assert.equal(read(dataDir, 'push', run.id, 'result.md'), 'true false\n', 'a refused push is false, not a failure');
     assert.equal(run.status, 'succeeded');
     assert.equal(pushes.length, 2);
-    assert.equal(pushes[0].path, '/chores');
+    assert.equal(pushes[0].path, '/', 'published as JSON to the server, the topic inside');
     assert.equal(pushes[0].headers.authorization, 'Bearer tk_secret');
-    assert.equal(pushes[0].headers.title, 'Heute: 3 Termine');
-    assert.equal(pushes[0].headers.click, 'https://chores.example');
-    assert.equal(pushes[0].text, 'Grüessech');
+    assert.equal(pushes[0].headers['content-type'], 'application/json');
+    assert.deepEqual(JSON.parse(pushes[0].text), { topic: 'chores', title: 'Heute: 3 Termine', message: 'Grüessech', tags: ['bell'], click: 'https://chores.example' });
     assert.match(read(dataDir, 'push', run.id, 'run.log'), /could not notify: ntfy answered 503/);
 
     const without = await runJob({ name: 'push', recipesDir, dataDir, anthropic: null });
@@ -202,9 +201,9 @@ test('a job can push once through ntfy, and a run without the settings says so',
   }
 });
 
-test('a title a phone cannot show is cut down to what it can', async () => {
+test('a title keeps its umlauts and is cut to one line a phone can show', async () => {
   const seen = [];
-  const ntfy = createServer((req, res) => { seen.push(req.headers.title); req.resume(); req.on('end', () => res.writeHead(200).end('{}')); });
+  const ntfy = createServer((req, res) => { let t = ''; req.on('data', c => { t += c; }); req.on('end', () => { seen.push(JSON.parse(t).title); res.writeHead(200).end('{}'); }); });
   await new Promise(r => ntfy.listen(0, '127.0.0.1', r));
   const { recipesDir, dataDir } = dirs({ odd: "export default async ctx => ctx.notify({ title: 'Grüessech ✓ ' + 'x'.repeat(200), message: 'y' });\n" });
   mkdirSync(dataDir, { recursive: true });
@@ -212,10 +211,46 @@ test('a title a phone cannot show is cut down to what it can', async () => {
   try {
     await runJob({ name: 'odd', recipesDir, dataDir, anthropic: null, env: { NTFY_URL: `http://127.0.0.1:${ntfy.address().port}`, NTFY_TOPIC: 'c', NTFY_TOKEN_FILE: join(dataDir, 't') } });
     assert.equal(seen[0].length, 120);
-    assert.match(seen[0], /^Gr\?essech \? x+$/, 'one ? for each character a header cannot carry');
+    assert.match(seen[0], /^Grüessech ✓ x+$/);
   } finally {
     ntfy.close();
   }
+});
+
+/** A one-page PDF with the given lines of text, built by hand. */
+function pdf(lines) {
+  const text = lines.map((l, i) => `BT /F1 11 Tf 40 ${780 - i * 16} Td (${l.replace(/[()\\]/g, '\\$&')}) Tj ET`).join('\n');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(text, 'latin1')} >>\nstream\n${text}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets = objects.map((body, i) => {
+    const at = Buffer.byteLength(out, 'latin1');
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    return at;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+test('a job reads a PDF as text, with the layout kept', async () => {
+  const { recipesDir, dataDir } = dirs({ pdf: 'export default async ctx => ctx.pdfText(Buffer.from(ctx.params.pdf, "base64"));\n' });
+  const bytes = pdf(['Montag, 5. Oktober 2026', '09:30   11:00   Behandlung   Raum 2', 'Grüessech']);
+  const run = await runJob({ name: 'pdf', recipesDir, dataDir, anthropic: null, params: { pdf: bytes.toString('base64') } });
+  assert.equal(run.status, 'succeeded', run.error);
+  const text = read(dataDir, 'pdf', run.id, 'result.md');
+  assert.match(text, /Montag, 5\. Oktober 2026/);
+  assert.match(text, /09:30\s+11:00\s+Behandlung\s+Raum 2/);
+  assert.match(text, /Grüessech/, 'decoded as UTF-8');
+  const bad = await runJob({ name: 'pdf', recipesDir, dataDir, anthropic: null, params: { pdf: Buffer.from('not a pdf').toString('base64') } });
+  assert.equal(bad.status, 'failed');
+  assert.match(bad.error, /^pdftotext: /);
 });
 
 test('a job file names itself in its first comment lines', () => {

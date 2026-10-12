@@ -7,6 +7,7 @@
 //                            a small model by default, tokens counted
 //   ctx.notify({...})        one push through ntfy, when the run is worth a
 //                            look on a phone
+//   ctx.pdfText(bytes)       a PDF's text, laid out as on the page
 //   ctx.state                JSON kept between runs of this job (save with
 //                            ctx.saveState()), e.g. what was already reported
 //   ctx.fetch, ctx.log, ctx.now, ctx.params
@@ -18,6 +19,7 @@
 // The model gets text and returns text: no tools, so whatever a letter or a
 // web page says cannot make it do anything.
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
@@ -104,16 +106,21 @@ export async function runJob({
         return false;
       }
       try {
-        const res = await fetchImpl(`${ntfy.url}/${ntfy.topic}`, {
+        // Published as JSON, which carries UTF-8 in the title too; a header
+        // could only carry latin-1, and "Frist: Prämie" would lose its ä.
+        const res = await fetchImpl(ntfy.url, {
           method: 'POST',
           headers: {
             authorization: `Bearer ${readFileSync(ntfy.tokenFile, 'utf8').trim()}`,
-            // Headers carry latin-1 only, and a phone shows one line.
-            title: String(title).replace(/[^\x20-\x7e]/g, '?').slice(0, 120),
-            tags,
-            ...(click ? { click } : {}),
+            'content-type': 'application/json',
           },
-          body: String(message).slice(0, 2000),
+          body: JSON.stringify({
+            topic: ntfy.topic,
+            title: String(title).replace(/\s+/g, ' ').slice(0, 120),
+            message: String(message).slice(0, 2000),
+            tags: String(tags).split(',').map(t => t.trim()).filter(Boolean),
+            ...(click ? { click } : {}),
+          }),
           signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
@@ -123,6 +130,15 @@ export async function runJob({
         log(`could not notify: ${err.message}`);
         return false;
       }
+    },
+    /** A PDF's text as pdftotext -layout sees it: columns stay columns. */
+    pdfText(bytes) {
+      return new Promise((resolve, reject) => {
+        const child = execFile('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { maxBuffer: 16 * 1024 * 1024, timeout: 30_000 },
+          (err, stdout) => (err ? reject(new Error(`pdftotext: ${err.message.split('\n')[0]}`)) : resolve(stdout)));
+        child.stdin.on('error', () => {});
+        child.stdin.end(Buffer.from(bytes));
+      });
     },
     mcp(gateway) {
       const url = gateways[gateway];

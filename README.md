@@ -78,6 +78,8 @@ export default async function (ctx) {
   worth a look on a phone. It needs `NTFY_URL`, `NTFY_TOPIC` and
   `NTFY_TOKEN_FILE` in the run's pod; without them it says so in the log and
   returns false, and a refused push never fails the run.
+- `ctx.pdfText(bytes)` returns a PDF's text as `pdftotext -layout` lays it
+  out (poppler is in the image), for lists and letters parsed in code.
 - `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
   new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
 
