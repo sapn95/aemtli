@@ -197,10 +197,18 @@ test('questions asked side by side wait in line, and Stop ends all of them', asy
   await settle();
   const c = b.chats.get(id);
   assert.equal(c.question.title, 'shell: ls');
+  assert.equal(c.events[c.events.indexOf(c.question.event)].title, 'shell: ls');
+  const early = watcher();
+  await b.watch(id, early);
+  assert.equal(c.events[early.frames[0].question.index].title, 'shell: ls', 'not the newest question');
   b.answer(id, 'allow');
   await settle();
   assert.equal(c.status, 'waiting');
   assert.equal(c.question.title, 'shell: pwd', 'the second comes up');
+  // The page is pointed at the question that waits, not the newest one.
+  const w = watcher();
+  await b.watch(id, w);
+  assert.equal(c.events[w.frames[0].question.index].title, 'shell: pwd');
   b.answer(id, 'allow');
   await settle();
   assert.equal(c.status, 'idle');
@@ -225,7 +233,8 @@ test('the page never sees the request id of a question', async () => {
   await b.say(id, 'TOOL');
   await settle();
   const status = w.frames.find(f => f.kind === 'status' && f.status === 'waiting');
-  assert.deepEqual(Object.keys(status.question), ['title', 'options']);
+  assert.deepEqual(Object.keys(status.question), ['title', 'options', 'index']);
+  assert.equal(b.chats.get(id).events[status.question.index].type, 'question');
 });
 
 test('a conversation goose does not know is a 404, and is not kept', async () => {
