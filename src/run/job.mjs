@@ -10,7 +10,7 @@
 //   ctx.notify({...})        one push through ntfy, when the run is worth a
 //                            look on a phone
 //   ctx.pdfText(bytes)       a PDF's text, laid out as on the page
-//   ctx.qr(bytes)            the QR codes on a PDF's first pages, as text
+//   ctx.qr(bytes)            the QR codes on a PDF's pages, as text
 //   ctx.bills(bytes)         the Swiss QR bills on a PDF, read and checked
 //   ctx.paymentFile({...})   a pain.001 file for e-banking (see pain001.mjs)
 //   ctx.attach(name, data)   a file kept with the run, downloadable from its
@@ -27,12 +27,14 @@
 // The model gets text and returns text: no tools, so whatever a letter or a
 // web page says cannot make it do anything.
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
-import { mkdtemp, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
+import { prepareZXingModule, purgeZXingModule, readBarcodes } from 'zxing-wasm/reader';
 import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME, ATTACHMENT_NAME, ATTACHMENT_TYPES } from '../store/runs.mjs';
 import { createMcpClient } from './mcp-client.mjs';
 import { jobCards } from './cards.mjs';
@@ -43,11 +45,29 @@ export const DEFAULT_MODEL = 'claude-haiku-5-5';
 const THINKING_ROOM = 2048;
 const ATTACHMENT_MAX = 10 * 1024 * 1024;
 const ATTACHMENTS_PER_RUN = 20;
-// A PDF the QR reader takes, and the longest side a page is drawn at: A4 at
-// 300 dpi is 3508 pixels, and a page that claims to be two metres tall is
-// drawn no bigger.
+// A PDF the QR reader takes, and the longest side a page is drawn at: 2400
+// pixels is about 200 dpi on A4, which read every scan it was tried on, and a
+// page that claims to be two metres tall is drawn no bigger.
 const QR_PDF_MAX = 25 * 1024 * 1024;
-const QR_PIXELS = 3600;
+const QR_PIXELS = 2400;
+
+// The QR reader is ZXing compiled to WebAssembly, loaded from the package
+// itself and never from a network. zbar was tried first and missed the codes
+// on two of four real scanned bills, which ZXing read; trying harder costs
+// little next to drawing the page.
+let zxingReady = false;
+function zxing() {
+  if (!zxingReady) {
+    const wasm = readFileSync(createRequire(import.meta.url).resolve('zxing-wasm/reader/zxing_reader.wasm'));
+    prepareZXingModule({ overrides: { wasmBinary: wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength) } });
+    zxingReady = true;
+  }
+  return readBarcodes;
+}
+// tryHarder: without it the iCalendar code on a real Zivilschutz call-up was
+// missed. A turned page is tried too; light codes on dark ground are not
+// printed on letters.
+const QR_OPTIONS = { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: false, maxNumberOfSymbols: 8 };
 
 /** Runs a program on its arguments; resolves with its stdout and exit code, or rejects with its first line of error. */
 const run = (cmd, args, { okCodes = [0], timeout = 60_000 } = {}) => new Promise((resolve, reject) => {
@@ -57,15 +77,6 @@ const run = (cmd, args, { okCodes = [0], timeout = 60_000 } = {}) => new Promise
   });
 });
 
-/** The symbols in zbarimg's XML: text as it is, binary data from base64. */
-export function zbarSymbols(xml) {
-  const out = [];
-  for (const [, attrs, cdata, plain] of String(xml).matchAll(/<data([^>]*)>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/data>/g)) {
-    const raw = cdata ?? plain ?? '';
-    out.push(/format=['"]base64['"]/.test(attrs) ? Buffer.from(raw, 'base64').toString('utf8') : raw);
-  }
-  return out;
-}
 
 /** The model client, through the model proxy that holds the real key. */
 function anthropicFrom(env) {
@@ -153,8 +164,9 @@ export async function runJob({
     },
     /**
      * The QR codes on the first `pages` pages of a PDF, as their text, in
-     * page order: pdftoppm draws the pages, zbarimg reads the codes. An
-     * empty list when there are none.
+     * page order: pdftoppm draws the pages, ZXing reads the codes. An empty
+     * list when there are none. A page the reader fails on fails the call:
+     * a bill on it would otherwise be missed without a word.
      */
     /**
      * The Swiss QR bills on a PDF: for each code that is one, { ok, bill }
@@ -177,17 +189,20 @@ export async function runJob({
         const total = Number(/^Pages:\s+(\d+)/m.exec(info)?.[1] ?? 0);
         if (total > pages) log(`the PDF has ${total} pages; QR codes were looked for on the first ${pages}`);
         await run('pdftoppm', ['-scale-to', String(QR_PIXELS), '-l', String(pages), '-png', join(work, 'in.pdf'), join(work, 'page')]);
-        const images = (await readdir(work)).filter(f => f.endsWith('.png')).sort().map(f => join(work, f));
-        if (!images.length) return [];
-        // 4 is zbarimg's "nothing found". 1 is "an image could not be
-        // read", which can be one page of several: what the others gave
-        // still counts, and the page is named in the log.
-        const { stdout, code } = await run('zbarimg', ['--quiet', '--xml', '-Sdisable', '-Sqrcode.enable', ...images], { okCodes: [1, 4] });
-        if (code === 1) {
-          if (!stdout.includes('<barcodes')) throw new Error('zbarimg could not read the pages');
-          log('zbarimg could not read every page; the codes it found on the others are used');
+        const images = (await readdir(work)).filter(f => f.endsWith('.png')).sort();
+        const read = zxing();
+        const codes = [];
+        for (const image of images) {
+          try {
+            for (const r of await read(new Blob([await readFile(join(work, image))]), QR_OPTIONS)) codes.push(r.text);
+          } catch (err) {
+            // The next call loads the reader afresh, in case this one broke it.
+            purgeZXingModule();
+            zxingReady = false;
+            throw new Error(`${image} could not be read for QR codes: ${err.message}`, { cause: err });
+          }
         }
-        return [...new Set(zbarSymbols(stdout))];
+        return [...new Set(codes)];
       } finally {
         await rm(work, { recursive: true, force: true });
       }
