@@ -78,9 +78,15 @@ export function createGateway({ command, env = process.env, policy, approvals, a
   }
 
   function filterTools(tools) {
-    return tools.filter(t => policy.decide(t.name) !== 'deny').map(t => (policy.decide(t.name) === 'approve'
-      ? { ...t, description: `${t.description ?? ''}\n\nNeeds the owner's approval: the call waits until they decide.`.trim() }
-      : t));
+    return tools.filter(t => policy.decide(t.name) !== 'deny').map(t => {
+      if (policy.decide(t.name) === 'approve') {
+        return { ...t, description: `${t.description ?? ''}\n\nNeeds the owner's approval: the call waits until they decide.`.trim() };
+      }
+      const holds = policy.holdsWhen(t.name);
+      return holds.length
+        ? { ...t, description: `${t.description ?? ''}\n\nWith ${holds.join(' or ')} filled in, it needs the owner's approval: the call waits until they decide.`.trim() }
+        : t;
+    });
   }
 
   /** The names the server itself lists, asked once per session. */
@@ -102,7 +108,7 @@ export function createGateway({ command, env = process.env, policy, approvals, a
         // Only a name the server lists can be held or run: no variant spelling
         // reaches the owner's screen or the server.
         if (typeof name !== 'string' || !(await listed(session)).has(name)) return fail(-32602, `Unknown tool: ${name}`);
-        const decision = policy.decide(name);
+        const decision = policy.decide(name, message.params?.arguments ?? {});
         if (decision === 'deny') return fail(-32602, `Unknown tool: ${name}`);
         if (decision === 'approve') {
           const held = approvals.hold(name, message.params?.arguments ?? {});

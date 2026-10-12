@@ -26,6 +26,27 @@ test('a policy: exact names and wildcards, deny over approve over allow, approve
   }
 });
 
+test('hold_if: an allowed call waits when an argument that makes it outward is filled', () => {
+  const p = parsePolicy('allow: [create-event, read_*]\nhold_if:\n  create-event: [body.attendees, notify]\n');
+  assert.equal(p.decide('create-event', {}), 'allow');
+  assert.equal(p.decide('create-event', { body: { subject: 'Zahnarzt' } }), 'allow');
+  assert.equal(p.decide('create-event', { body: { attendees: [] } }), 'allow', 'an empty list sends nothing');
+  assert.equal(p.decide('create-event', { body: { attendees: [{ emailAddress: { address: 'a@example.com' } }] } }), 'approve');
+  assert.equal(p.decide('create-event', { Body: { ATTENDEES: [{}] } }), 'approve', 'no other spelling slips through');
+  assert.equal(p.decide('create-event', { body: { attendees: [], Attendees: [{}] } }), 'approve', 'two spellings: the filled one decides');
+  assert.equal(p.decide('create-event', { body: { attendees: '[{"a":1}]' } }), 'approve', 'a list sent as a string counts too');
+  assert.equal(p.decide('create-event', { notify: true }), 'approve');
+  assert.equal(p.decide('create-event', { notify: false }), 'allow');
+  assert.equal(p.decide('create-event'), 'allow', 'without arguments: what the tool is');
+  assert.equal(p.decide('read_x', { body: { attendees: [1] } }), 'allow', 'only the tools named');
+  assert.deepEqual(p.holdsWhen('create-event'), ['body.attendees', 'notify']);
+  assert.equal(parsePolicy('default: allow\nhold_if:\n  x: [a]').decide('x', { a: 1 }), 'approve', 'by default as well');
+  assert.equal(parsePolicy('deny: [x]\nhold_if:\n  x: [a]').decide('x', { a: 1 }), 'deny', 'deny stays deny');
+  for (const bad of ['hold_if: [x]', 'hold_if:\n  x: a', 'hold_if:\n  x: []', 'hold_if:\n  x: ["a..b"]', 'hold_if:\n  "a b": [c]']) {
+    assert.throws(() => parsePolicy(bad), bad);
+  }
+});
+
 /** Starts a gateway on free ports with the fake server; `body` gets helpers. */
 async function withGateway(body, { policy = 'allow: [read_*]\napprove: [send_*]\ndeny: [secret_*]\n', env = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'aemtli-gw-'));
@@ -82,6 +103,17 @@ test('reads pass through, the server keeps its credentials, the gateway its own 
     const text = call.body.result.content[0].text;
     assert.match(text, /^read_thing \{"id":"7"\} call 1 secret=s3cret admin=none$/);
   }));
+
+test('a call is held for its arguments, and the tool says when', () =>
+  withGateway(async ({ rpc, open, admin }) => {
+    const sid = await open();
+    const { tools } = (await rpc('tools/list', {}, sid)).body.result;
+    assert.match(tools.find(t => t.name === 'read_thing').description, /With body\.to filled in, it needs the owner's approval/);
+    assert.match((await rpc('tools/call', { name: 'read_thing', arguments: { id: '1' } }, sid)).body.result.content[0].text, /^read_thing/);
+    const held = await rpc('tools/call', { name: 'read_thing', arguments: { body: { to: ['someone@example.com'] } } }, sid);
+    assert.match(held.body.result.content[0].text, /^Not done yet: read_thing needs the owner's approval/);
+    assert.equal((await admin('/approvals')).body.approvals[0].tool, 'read_thing');
+  }, { policy: 'allow: [read_*]\napprove: [send_*]\ndeny: [secret_*]\nhold_if:\n  read_thing: [body.to]\n' }));
 
 test('the tool list hides what is denied and says what needs approval', () =>
   withGateway(async ({ rpc, open }) => {

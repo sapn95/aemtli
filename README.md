@@ -116,10 +116,17 @@ behind its own `aemtli mcp-gateway`:
 ```yaml
 # a gateway's policy
 default: approve
-allow: [epost_list_*, epost_get_letter, epost_store_letter]
+allow: [epost_list_*, epost_get_letter, epost_store_letter, create-calendar-event]
 approve: [epost_delete_letter]
 deny: [epost_login]
+# An allowed call is held when one of these arguments is filled: a calendar
+# entry is private, one with attendees sends invitations.
+hold_if:
+  create-calendar-event: [body.attendees]
 ```
+
+`hold_if` paths are dotted argument names, matched without regard to case;
+an empty list, object or string, `null` and `false` count as not filled.
 
 The example has one gateway, for [epost-mcp](https://github.com/sapn95/epost-mcp),
 in [`deploy/kubernetes/example/mcp-epost`](deploy/kubernetes/example/mcp-epost).
