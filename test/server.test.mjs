@@ -90,14 +90,16 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
     assert.match(res.body, /Says &quot;hi&quot; &amp; leaves/);
     assert.doesNotMatch(res.body, /<b>world<\/b>/);
     // The schedule in words, as its own line next to the name.
-    assert.match(res.body, /<p class="when" title="13 8 \* \* 1 \(Europe\/Zurich\)">Mondays at 08:13<\/p>/);
+    assert.match(res.body, /<p class="when" title="Mondays at 08:13 \(13 8 \* \* 1, Europe\/Zurich\)">Mondays at 08:13<\/p>/, 'the whole schedule in the tooltip, as the text may be cut at two lines');
+    assert.match(res.body, /<link rel="stylesheet" href="\/static\/app\.css\?v=0\.0\.0-test">/, 'assets carry the version');
+    assert.match(res.body, /<script type="module" src="\/static\/app\.js\?v=0\.0\.0-test"><\/script>/);
     assert.doesNotMatch(res.body, />13 8 \* \* 1</, 'no cron in the text, only in the tooltip');
     // When it runs next, said the way a person would.
     assert.match(res.body, /<span class="next">tomorrow 08:13<\/span>/);
     assert.match(res.body, /title="Says &quot;hi&quot; &amp; leaves"/, 'what it does is on the name');
     assert.doesNotMatch(res.body, /title=""/, 'and no empty tooltip where there is none');
     // This week (5 to 11 Oct, Sunday is today): Monday's run is ticked off and links to it.
-    assert.match(res.body, /<h1 id="plan-title">This week<\/h1><p>5 Oct to 11 Oct<\/p>/);
+    assert.match(res.body, /<h1 id="plan-title">This week<\/h1><p class="range">5 Oct to 11 Oct<\/p>/);
     assert.match(res.body, new RegExp(`<a class="mark succeeded" href="/recipes/hello/runs/${RUN_ID}">✓</a>`));
     assert.match(res.body, /<li class="day ran" title="Mon 5 Oct: done at 08:13">/, 'the day carries its run');
     assert.match(res.body, /<li class="day today" title="Sun 11 Oct: nothing">/, 'and today is marked as today');
@@ -106,7 +108,7 @@ test('the dashboard shows the recipe, its next run and its last run, escaped', (
     assert.match(res.body, /<span class="next">only by hand<\/span>/);
     assert.match(res.body, /Paused\. Normally every day at 00:00 \(UTC\)/, 'a zone other than the page\'s is named');
     assert.match(res.body, /<span class="status succeeded">Done<\/span>/);
-    assert.match(res.body, /<link rel="icon" href="\/static\/icon\.svg" type="image\/svg\+xml">/);
+    assert.match(res.body, /<link rel="icon" href="\/static\/icon\.svg\?v=0\.0\.0-test" type="image\/svg\+xml">/);
     assert.match(res.body, /owner@example\.com/);
   }));
 
@@ -198,6 +200,10 @@ test('static files are served from the list, nothing else', () =>
   withUi(async ({ call }) => {
     const css = await call('/static/app.css');
     assert.equal(css.status, 200);
+    assert.equal(css.headers['cache-control'], 'max-age=300');
+    const pinned = await call('/static/app.css?v=0.0.0-test');
+    assert.equal(pinned.headers['cache-control'], 'public, max-age=31536000, immutable', 'this version\'s URL never changes');
+    assert.equal((await call('/static/app.css?v=0.0.1')).headers['cache-control'], 'max-age=300', 'another version is not pinned');
     assert.match(css.headers['content-type'], /text\/css/);
     const icon = await call('/static/icon.svg');
     assert.equal(icon.status, 200);

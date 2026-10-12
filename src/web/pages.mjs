@@ -57,9 +57,9 @@ export function layout({ title, user, version, body, script, active }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>${esc(title)} – ämtli</title>
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icon.svg?v=${esc(version)}" type="image/svg+xml">
 <link rel="preload" href="/static/fonts/schibsted-grotesk.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v=${esc(version)}">
 </head>
 <body>
 <header class="top">
@@ -71,7 +71,7 @@ export function layout({ title, user, version, body, script, active }) {
 ${body}
 </main>
 <footer>ämtli ${esc(version)}, goose recipes on a schedule</footer>
-${script ? `<script type="module" src="/static/${esc(script)}"></script>` : ''}
+${script ? `<script type="module" src="/static/${esc(script)}?v=${esc(version)}"></script>` : ''}
 </body>
 </html>`;
 }
@@ -158,7 +158,7 @@ function chore(it, now, timeZone) {
   <div class="head">
     <button type="button" class="fav" data-recipe="${esc(it.name)}" aria-pressed="${it.favorite ? 'true' : 'false'}" aria-label="Favourite: ${esc(it.title)}" title="${it.favorite ? 'A favourite' : 'Make it a favourite'}">${it.favorite ? '★' : '☆'}</button>
     <a class="name" href="/recipes/${esc(it.name)}"${it.description ? ` title="${esc(it.description)}"` : ''}>${esc(it.title)}</a>
-    <p class="when" title="${esc(it.schedule)} (${esc(it.timeZone)})">${esc(schedule)}</p>
+    <p class="when" title="${esc(schedule)} (${esc(it.schedule)}, ${esc(it.timeZone)})">${esc(schedule)}</p>
   </div>
   <ol class="strip">${strip}</ol>
   <div class="meta">
@@ -175,10 +175,12 @@ function plan(items, week, now, timeZone) {
   const ordered = [...items].sort((a, b) => (b.favorite - a.favorite) || (a.nextRun ?? '9999').localeCompare(b.nextRun ?? '9999'));
   const range = `${fmt(week.days[0].start, timeZone, { day: 'numeric', month: 'short' })} to ${fmt(week.days[6].start, timeZone, { day: 'numeric', month: 'short' })}`;
   return `<section class="plan" aria-labelledby="plan-title">
-<div class="plan-head"><h1 id="plan-title">This week</h1><p>${esc(range)}</p></div>
-<div class="find" role="search">
-  <input type="search" id="find" placeholder="Search ${items.length} chores" aria-label="Search chores" autocomplete="off" spellcheck="false">
-  <button type="button" id="only-fav" class="chip" aria-pressed="false">★ Favourites</button>
+<div class="plan-head">
+  <h1 id="plan-title">This week</h1><p class="range">${esc(range)}</p>
+  <div class="find" role="search">
+    <input type="search" id="find" placeholder="Search ${items.length} chores" aria-label="Search chores" autocomplete="off" spellcheck="false">
+    <button type="button" id="only-fav" class="chip" aria-pressed="false"><span aria-hidden="true">★</span> Favourites</button>
+  </div>
 </div>
 ${weekHead(week, timeZone)}
 <ul class="chores">

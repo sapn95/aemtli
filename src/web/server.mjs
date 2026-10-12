@@ -207,7 +207,10 @@ export function createApp(deps) {
     if (req.method === 'GET' && path.startsWith('/static/')) {
       const file = path.slice('/static/'.length);
       if (!Object.hasOwn(STATIC, file)) return send(res, 404, 'text/plain', 'not found');
-      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), { 'cache-control': 'max-age=300' });
+      // The pages ask for ?v=<version>, so a new release is a new URL and the
+      // old file can be cached for good; anything else for five minutes.
+      const pinned = url.searchParams.get('v') === version;
+      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), { 'cache-control': pinned ? 'public, max-age=31536000, immutable' : 'max-age=300' });
     }
     if (req.method === 'GET' && path === '/') {
       const items = await collect();
