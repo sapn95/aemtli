@@ -122,7 +122,13 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
   // Calls that read a card and post it back run one after the other per
   // card, so two changes at once cannot undo each other.
   const locks = new Map();
-  function oneAtATime(id, fn) {
+  function oneAtATime(card, fn) {
+    let id;
+    try {
+      id = cardPath(card);
+    } catch (err) {
+      return Promise.reject(err);
+    }
     const before = locks.get(id) ?? Promise.resolve();
     const run = before.then(fn, fn);
     const settled = run.catch(() => {});
@@ -242,7 +248,7 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
      * that is undefined or null is not given.
      */
     updateCard(id, change = {}) {
-      return oneAtATime(cardPath(id), async () => {
+      return oneAtATime(id, async () => {
         const now = await getCard(id);
         const form = {
           title: change.title ?? now.title,
@@ -261,7 +267,7 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
 
     /** Puts a card at the end of another column of its board. */
     moveCard(id, lane) {
-      return oneAtATime(cardPath(id), async () => {
+      return oneAtATime(id, async () => {
         const target = column(onlyOne(await getCard(id)), lane ?? '');
         await send(`${cardPath(id)}/move`, { method: 'POST', form: { lane: String(target.id) } });
         return { id: Number(id), column: target.name };
@@ -270,7 +276,7 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
 
     /** Ticks or unticks one subtask, counted from 0. */
     setSubtask(id, index, done) {
-      return oneAtATime(cardPath(id), async () => {
+      return oneAtATime(id, async () => {
         const now = await getCard(id);
         const s = now.subtasks[index];
         if (!s) throw Object.assign(new Error(`card ${id} has ${now.subtasks.length} subtasks; there is no number ${index}`), { status: 400 });
@@ -279,14 +285,18 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
       });
     },
 
-    async archiveCard(id) {
-      await send(`${cardPath(id)}/archive`, { method: 'POST', form: {} });
-      return { id: Number(id), archived: true };
+    archiveCard(id) {
+      return oneAtATime(id, async () => {
+        await send(`${cardPath(id)}/archive`, { method: 'POST', form: {} });
+        return { id: Number(id), archived: true };
+      });
     },
 
-    async restoreCard(id) {
-      await send(`${cardPath(id)}/restore`, { method: 'POST', htmx: true, form: {} });
-      return { id: Number(id), archived: false };
+    restoreCard(id) {
+      return oneAtATime(id, async () => {
+        await send(`${cardPath(id)}/restore`, { method: 'POST', htmx: true, form: {} });
+        return { id: Number(id), archived: false };
+      });
     },
   };
 }
