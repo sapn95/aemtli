@@ -144,6 +144,7 @@ test('a file the bank would refuse is not written', () => {
     [{ payments: [{ ...ok, bill: bill({ creditor: ['S', '\u2606\u2606', 'Rue du Lac', '1', '2501', 'Biel', 'CH'] }) }] }, /the creditor: the name .* cannot be written/],
     [{ payments: [{ ...ok, bill: bill({ creditor: ['S', '\u0395\u03bb\u03bb\u03ac\u03c2 AG', 'Rue du Lac', '1', '2501', 'Biel', 'CH'] }) }] }, /cannot be written as it is/],
     [{ debtor: { ...DEBTOR, bic: 'EXAMCHBBXXXX' } }, /is not a BIC/],
+    [{ payments: [{ ...ok, bill: { ...ok.bill, iban: 'CH4431999123000889013' } }] }, /creditor IBAN .* fails its check digits/],
     [{ debtor: { ...DEBTOR, name: 'x'.repeat(71) } }, /the debtor: the name/],
   ]) {
     assert.throws(() => buildPain001({ debtor: DEBTOR, messageId: 'M', payments: [ok], ...args }), why);

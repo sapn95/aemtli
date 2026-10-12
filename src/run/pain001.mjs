@@ -82,6 +82,7 @@ export function buildPain001({ debtor, payments, messageId, now = new Date() }) 
   if (debtor.bic !== undefined && !BIC.test(debtor.bic)) throw new Error(`the debtor's BIC ${debtor.bic} is not a BIC`);
   for (const p of payments) {
     if (p.bill.currency !== 'CHF') throw new Error(`${p.id}: only CHF goes into this file`);
+    if (!ibanValid(p.bill.iban)) throw new Error(`${p.id}: the creditor IBAN ${p.bill.iban} fails its check digits`);
     if (!(cents(p.bill.amount) > 0)) throw new Error(`${p.id}: no amount`);
     if (!isDate(p.date)) throw new Error(`${p.id}: no execution date`);
     name(p.bill.creditor?.name, `${p.id}: the creditor`);
