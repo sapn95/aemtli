@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -367,3 +367,39 @@ test('without a state directory there are no favourites to keep, and the page sa
     assert.equal((await call('/api/favorites/hello/on', { method: 'POST', headers: { origin: ORIGIN } })).status, 503);
     assert.doesNotMatch((await call('/')).body, /data-fav=/);
   }, { stateDir: false }));
+
+test('a file a job kept is a download from its run page, and nothing else is', () =>
+  withUi(async ({ call, root, port }) => {
+    const dir = join(root, 'data', 'runs', 'hello', RUN_ID);
+    mkdirSync(join(dir, 'files'));
+    writeFileSync(join(dir, 'files', 'pain.xml'), '<Document/>');
+    writeFileSync(join(dir, 'files', 'page.html'), '<script>alert(1)</script>');
+    writeFileSync(join(dir, 'files', 'unlisted.txt'), 'x');
+    writeFileSync(join(dir, 'files', '.hidden'), 'x');
+    writeFileSync(join(dir, 'files', 'scan.pdf'), Buffer.from([0x25, 0x50, 0x44, 0x46, 0xff, 0xfe, 0x00, 0x80]));
+    writeFileSync(join(root, 'secret.txt'), 'nobody');
+    symlinkSync(join(root, 'secret.txt'), join(dir, 'files', 'link.txt'));
+    const record = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
+    writeJsonAtomic(join(dir, 'run.json'), { ...record, files: [
+      { name: 'pain.xml', type: 'application/xml', bytes: 11 },
+      { name: 'page.html', type: 'text/html', bytes: 25 },
+      { name: 'link.txt', type: 'text/plain', bytes: 6 },
+      { name: '.hidden', type: 'text/plain', bytes: 1 },
+      { name: 'scan.pdf', type: 'application/pdf', bytes: 8 },
+    ] });
+    // A binary file comes back byte for byte, not through a text decoder.
+    const pdf = await fetch(`http://127.0.0.1:${port}/recipes/hello/runs/${RUN_ID}/files/scan.pdf`, { headers: { 'cf-access-jwt-assertion': 'good' } });
+    assert.deepEqual([...new Uint8Array(await pdf.arrayBuffer())], [0x25, 0x50, 0x44, 0x46, 0xff, 0xfe, 0x00, 0x80]);
+    const page = await call(`/recipes/hello/runs/${RUN_ID}`);
+    assert.match(page.body, new RegExp(`<a href="/recipes/hello/runs/${RUN_ID}/files/pain.xml" download>pain.xml</a> <span class="quiet">11 bytes</span>`));
+    const file = await call(`/recipes/hello/runs/${RUN_ID}/files/pain.xml`);
+    assert.equal(file.status, 200);
+    assert.equal(file.body, '<Document/>');
+    assert.match(file.headers['content-type'], /^application\/xml/);
+    assert.equal(file.headers['content-disposition'], 'attachment; filename="pain.xml"');
+    assert.equal(file.headers['x-content-type-options'], 'nosniff');
+    for (const name of ['page.html', 'unlisted.txt', 'link.txt', '.hidden', '..%2Frun.json', '%E0%A4%A', 'missing.xml']) {
+      assert.equal((await call(`/recipes/hello/runs/${RUN_ID}/files/${name}`)).status, 404, name);
+    }
+    assert.equal((await call(`/recipes/hello/runs/${RUN_ID}/files/pain.xml`, { token: null })).status, 403, 'signed in only');
+  }));

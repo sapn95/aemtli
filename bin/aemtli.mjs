@@ -8,6 +8,7 @@ import { startServer } from '../src/web/server.mjs';
 import { createK8s } from '../src/web/k8s.mjs';
 import { createAccessVerifier } from '../src/web/auth.mjs';
 import { createChatBroker } from '../src/web/chats.mjs';
+import { renderMarkdown } from '../src/web/markdown.mjs';
 import { startModelProxy } from '../src/proxy/model-proxy.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
 import { createKanban, kanbanTools } from '../src/mcp/kanban.mjs';
@@ -150,6 +151,7 @@ async function web() {
     notify: push,
     link: id => (publicOrigin ? `${publicOrigin}/chat#${encodeURIComponent(id)}` : undefined),
     log,
+    render: renderMarkdown,
   }) : null;
   if (env.NTFY_URL) {
     if (!gateways.configured) log('NTFY_URL is set but there are no GATEWAYS to watch');

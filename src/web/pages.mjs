@@ -286,6 +286,9 @@ ${runs.length ? `<ul class="runs">${rows}</ul>` : '<p class="quiet">It has not r
 }
 
 /** One run: its answer (rendered Markdown), its numbers, and its log. */
+/** "12 KB", "1.4 MB": a file's size as a person reads it. */
+const size = bytes => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+
 export function runPage(run, title, resultHtml, log, timeZone) {
   return `<article class="run-page">
 <p class="crumb"><a href="/recipes/${esc(run.recipe)}">${esc(title)}</a></p>
@@ -299,6 +302,7 @@ export function runPage(run, title, resultHtml, log, timeZone) {
 </dl>
 ${run.error ? `<div class="error" role="alert"><h2>What went wrong</h2><p>${esc(run.error)}</p></div>` : ''}
 <section class="result md">${resultHtml || '<p class="quiet">The run left no answer.</p>'}</section>
+${run.files?.length ? `<section class="files"><h2>Files</h2><ul>${run.files.map(f => `<li><a href="/recipes/${esc(run.recipe)}/runs/${esc(run.id)}/files/${encodeURIComponent(f.name)}" download>${esc(f.name)}</a> <span class="quiet">${esc(size(f.bytes))}</span></li>`).join('')}</ul></section>` : ''}
 <details class="log"><summary>goose's log</summary><pre>${esc(log.slice(-20_000)) || 'Empty.'}</pre></details>
 </article>`;
 }

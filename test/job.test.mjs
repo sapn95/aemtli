@@ -6,7 +6,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runJob } from '../src/run/job.mjs';
+import { runJob, zbarSymbols } from '../src/run/job.mjs';
+import { qrPdf, blankPdf } from './fixtures/pdf.mjs';
 import { jobMeta } from '../src/run/meta.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
 import { createMcpClient } from '../src/run/mcp-client.mjs';
@@ -371,4 +372,79 @@ test('a gateway that is not up yet is waited for; one that never comes up fails 
   const reset = createMcpClient('http://gw/mcp', { fetchImpl: async () => { resets++; throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }); }, retryMs: 5, waitMs: 1000 });
   await assert.rejects(reset.tools(), /fetch failed/);
   assert.equal(resets, 1);
+});
+
+test('a job reads the QR code on a PDF and keeps a file with its run', async () => {
+  // The sample bill of the QR-bill guidelines (public test values).
+  const pdf = qrPdf(['SPC', '0200', '1', 'CH4431999123000889012', 'S', 'Example Robert Schneider AG', 'Rue du Lac', '1268', '2501', 'Biel', 'CH', '', '', '', '', '', '', '', '1949.75', 'CHF', 'S', 'Example Pia-Maria Rutschmann-Schnyder', 'Grosse Marktgasse', '28', '9400', 'Rorschach', 'CH', 'QRR', '210000000003139471430009017', 'Order of 15 June', 'EPD'].join('\n'));
+  const { recipesDir, dataDir } = dirs({ pay: `export default async function (ctx) {
+  const codes = await ctx.qr(Buffer.from(ctx.params.pdf, 'base64'));
+  const none = await ctx.qr(Buffer.from(ctx.params.blank, 'base64'));
+  const [read] = await ctx.bills(Buffer.from(ctx.params.pdf, 'base64'));
+  const file = ctx.paymentFile({ debtor: { name: 'Example Debtor', iban: 'CH9300762011623852957' }, messageId: 'M-1', payments: [{ bill: read.bill, date: '2026-10-31', id: 'P-1' }] });
+  ctx.log('bill ' + read.bill.amount + ' ' + (file.includes('<InstdAmt Ccy="CHF">1949.75</InstdAmt>') ? 'in the file' : 'missing'));
+  ctx.log('no bills on a blank page: ' + (await ctx.bills(Buffer.from(ctx.params.blank, 'base64'))).length);
+  ctx.attach('codes.txt', codes.join('\\n---\\n'));
+  ctx.attach('codes.txt', codes.join('\\n===\\n'));
+  ctx.attach('pain.xml', '<x/>', 'application/xml');
+  for (const [n, t] of [['../x', 'text/plain'], ['ok.txt', 'text/html']]) {
+    try { ctx.attach(n, 'x', t); } catch (err) { ctx.log('refused ' + err.message); }
+  }
+  return [codes.length, none.length, codes[0].split('\\n')[3], ctx.runLink].join(' ');
+}
+` });
+  const blank = blankPdf();
+  const run = await runJob({ name: 'pay', recipesDir, dataDir, params: { pdf: pdf.toString('base64'), blank: blank.toString('base64') }, anthropic: null, env: { PUBLIC_ORIGIN: 'https://chores.example/' } });
+  assert.equal(run.status, 'succeeded', run.error);
+  assert.equal(read(dataDir, 'pay', run.id, 'result.md').trim(), `1 0 CH4431999123000889012 https://chores.example/recipes/pay/runs/${run.id}`);
+  assert.deepEqual(run.files, [{ name: 'codes.txt', type: 'text/plain', bytes: run.files[0].bytes }, { name: 'pain.xml', type: 'application/xml', bytes: 4 }], 'the second codes.txt replaced the first');
+  assert.match(read(dataDir, 'pay', run.id, 'files/codes.txt'), /^SPC\n0200\n1\nCH4431999123000889012/);
+  assert.doesNotMatch(read(dataDir, 'pay', run.id, 'files/codes.txt'), /---/);
+  const logText = read(dataDir, 'pay', run.id, 'run.log');
+  assert.match(logText, /refused not a file name for a run: \.\.\/x/);
+  assert.match(logText, /bill 1949\.75 in the file/);
+  assert.match(logText, /no bills on a blank page: 0/);
+  assert.match(logText, /refused not a type a run keeps: text\/html/);
+});
+
+test('zbarimg XML: text as it is, binary from base64', () => {
+  const xml = "<symbol><data><![CDATA[SPC\n0200]]></data></symbol><symbol><data format='base64' length='3'>aGk=</data></symbol>";
+  assert.deepEqual(zbarSymbols(xml), ['SPC\n0200', 'hi']);
+});
+
+test('the QR reader: a page it cannot read costs that page only, a huge PDF is refused, and a run keeps at most 20 files', async () => {
+  const pdf = qrPdf('SPC');
+  const bin = mkdtempSync(join(tmpdir(), 'aemtli-zbar-'));
+  // A zbarimg that reads one page and fails on another, as the real one does.
+  writeFileSync(join(bin, 'zbarimg'), "#!/bin/sh\nprintf \"<barcodes><data><![CDATA[SPC-part]]></data></barcodes>\"\nexit 1\n", { mode: 0o755 });
+  writeFileSync(join(bin, 'zbarimg-none'), '#!/bin/sh\necho broken >&2\nexit 1\n', { mode: 0o755 });
+  const { recipesDir, dataDir } = dirs({ limits: `export default async function (ctx) {
+  const out = [];
+  out.push((await ctx.qr(Buffer.from(ctx.params.pdf, 'base64'))).join());
+  try { await ctx.qr(Buffer.alloc(26 * 1024 * 1024)); } catch (err) { out.push(err.message); }
+  try { for (let i = 0; i < 21; i++) ctx.attach('f' + i + '.txt', 'x'); } catch (err) { out.push(err.message); }
+  ctx.attach('f0.txt', 'replaced, not a 21st');
+  return out.join('\\n');
+}
+`, broken: `export default async ctx => ctx.qr(Buffer.from(ctx.params.pdf, 'base64'));
+` });
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const run = await runJob({ name: 'limits', recipesDir, dataDir, params: { pdf: pdf.toString('base64') }, anthropic: null });
+    assert.equal(run.status, 'succeeded', run.error);
+    assert.deepEqual(read(dataDir, 'limits', run.id, 'result.md').trim().split('\n'), [
+      'SPC-part',
+      'a PDF of 27262976 bytes is over the 26214400 the QR reader takes',
+      'a run keeps at most 20 files',
+    ]);
+    assert.equal(run.files.length, 20);
+    assert.match(read(dataDir, 'limits', run.id, 'run.log'), /zbarimg could not read every page/);
+    copyFileSync(join(bin, 'zbarimg-none'), join(bin, 'zbarimg'));
+    const failed = await runJob({ name: 'broken', recipesDir, dataDir, params: { pdf: pdf.toString('base64') }, anthropic: null });
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.error, 'zbarimg could not read the pages');
+  } finally {
+    process.env.PATH = path;
+  }
 });

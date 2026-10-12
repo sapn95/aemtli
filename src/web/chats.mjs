@@ -23,9 +23,11 @@ const gone = () => Object.assign(new Error('no such conversation'), { status: 40
 /**
  * `connect()` returns a WebSocket-like object (send, close, onopen,
  * onmessage, onclose). `cwd` and `mcpServers` go to every session. `notify`
- * sends a push. `link(id)` is where a push points.
+ * sends a push. `link(id)` is where a push points. `render(text)` turns
+ * goose's Markdown into HTML that is safe to put into the page; without it
+ * the page shows the text as it is.
  */
-export function createChatBroker({ connect, cwd, mcpServers = [], notify = () => Promise.resolve(false), link = () => undefined, log = () => {}, answerMs = ANSWER_MS }) {
+export function createChatBroker({ connect, cwd, mcpServers = [], notify = () => Promise.resolve(false), link = () => undefined, log = () => {}, answerMs = ANSWER_MS, render = null, renderMs = 250 }) {
   let socket = null;
   let ready = null;
   let nextId = 1;
@@ -63,13 +65,37 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     for (const res of c.watchers) res.write(data);
   }
 
+  /** An event as the page gets it: goose's words also as HTML. */
+  const shown = e => (render && e.type === 'agent' ? { ...e, html: render(e.text) } : e);
+
+  /**
+   * An answer that is still arriving is drawn as HTML at most every
+   * `renderMs`, and only while somebody watches: Markdown cannot be drawn in
+   * pieces, and drawing the whole of it for every chunk is work nobody sees.
+   */
+  function drawSoon(c, index) {
+    if (!render) return;
+    c.drawIndex = index;
+    c.drawTimer ??= setTimeout(() => drawNow(c), renderMs);
+  }
+  function drawNow(c) {
+    clearTimeout(c.drawTimer);
+    c.drawTimer = null;
+    const i = c.drawIndex;
+    c.drawIndex = null;
+    if (i !== null && i !== undefined && c.events[i] && c.watchers.size) emit(c, { kind: 'replace', index: i, event: shown(c.events[i]) });
+  }
+
   function push(c, event) {
+    // The answer before it is finished: drawn whole before what follows.
+    drawNow(c);
     c.events.push(event);
     if (c.events.length > MAX_EVENTS + TRIM_STEP) {
       c.events.splice(0, c.events.length - MAX_EVENTS);
-      emit(c, snapshot(c));
+      if (c.watchers.size) emit(c, snapshot(c));
     } else {
-      emit(c, { kind: 'event', event });
+      // Drawn only for somebody to see.
+      if (c.watchers.size) emit(c, { kind: 'event', event: shown(event) });
     }
   }
 
@@ -78,11 +104,11 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
    * and which event it is, so the buttons go under that one and not under a
    * question still waiting in line.
    */
-  const shown = (c, q) => (q ? { title: q.title, options: q.options, index: c.events.indexOf(q.event) } : null);
+  const asked = (c, q) => (q ? { title: q.title, options: q.options, index: c.events.indexOf(q.event) } : null);
 
   function setStatus(c, status) {
     c.status = status;
-    emit(c, { kind: 'status', status, question: shown(c, c.question) });
+    emit(c, { kind: 'status', status, question: asked(c, c.question) });
   }
 
   /** One session/update from goose, into the conversation it belongs to. */
@@ -96,6 +122,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
         if (last?.type === role && !last.closed) {
           last.text += u.content.text;
           emit(c, { kind: 'append', index: c.events.length - 1, text: u.content.text });
+          if (role === 'agent') drawSoon(c, c.events.length - 1);
         } else {
           push(c, { type: role, text: u.content.text });
         }
@@ -261,7 +288,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     return c.loading;
   }
 
-  const snapshot = c => ({ kind: 'snapshot', events: c.events, status: c.status, question: shown(c, c.question), mode: c.mode, title: c.title });
+  const snapshot = c => ({ kind: 'snapshot', events: c.events.map(shown), status: c.status, question: asked(c, c.question), mode: c.mode, title: c.title });
 
   /** Loads a conversation for a caller: 404 when goose has none, or it was deleted meanwhile. */
   async function prepared(id) {
@@ -325,6 +352,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       push(c, { type: 'user', text, closed: true });
       setStatus(c, 'running');
       call('session/prompt', { sessionId: id, prompt: [{ type: 'text', text }] }, 0).then(result => {
+        drawNow(c);
         if (c.events.at(-1)) c.events.at(-1).closed = true;
         if (result?.stopReason === 'cancelled') push(c, { type: 'note', text: 'Stopped.' });
         dropQuestions(c, false);

@@ -2,7 +2,9 @@
 // page lists the conversations, shows one through a stream it can lose and
 // pick up again, and sends what is typed. Closing the page stops nothing:
 // a turn goes on, and a question waits until it is answered here or on
-// another device. Text from goose is set with textContent only, never HTML.
+// another device. goose's answers come as HTML the server rendered from their
+// Markdown, with raw HTML and script links already refused there; everything
+// else is set with textContent only.
 
 const list = document.getElementById('chats');
 const log = document.getElementById('log');
@@ -92,6 +94,9 @@ function render(e, index) {
       said.textContent = `Answered: ${OPTION_LABELS[e.answer] ?? e.answer}`;
       el.append(said);
     }
+  } else if (e.type === 'agent' && typeof e.html === 'string') {
+    el.className = 'msg agent md';
+    el.innerHTML = e.html;
   } else {
     el.className = `msg ${e.type}`;
     el.textContent = e.text ?? '';
@@ -170,7 +175,9 @@ function open(id) {
     } else if (m.kind === 'append') {
       events[m.index].text += m.text;
       const el = log.querySelector(`[data-index="${m.index}"]`);
-      if (el) el.textContent = events[m.index].text;
+      // An answer already drawn from Markdown waits for its next drawing;
+      // one that is not shows its text as it grows.
+      if (el && !el.classList.contains('md')) el.textContent = events[m.index].text;
       log.scrollTop = log.scrollHeight;
     } else if (m.kind === 'replace') {
       events[m.index] = m.event;

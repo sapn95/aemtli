@@ -57,6 +57,12 @@ const PERSONAL = [
   [/\b[A-ZÄÖÜ][a-zäöü]+(strasse|gasse|weg|platz)\s+\d{1,3}\b/, 'street address'],
 ];
 
+// The sample accounts of the Swiss QR-bill guidelines (SIX) and the example
+// IBAN of the Swiss banks: published test values that belong to nobody, which
+// the payment tests need. Exactly these, not a pattern, and in the tests (and
+// this list) only.
+const PUBLIC_SAMPLES = /\b(?:CH4431999123000889012|CH4431999123000889013|CH5800791123000889012|CH9300762011623852957|CH9300762011623852958)\b/g;
+
 // The lockfile used to be skipped wholesale, and it is exactly where an
 // authenticated registry URL ends up. Binary assets are still skipped for the
 // text rules — there is nothing to match — but a tracked PDF or screenshot is
@@ -164,7 +170,8 @@ for (const e of files) {
     // see `n` running into the capital and match nothing, so an address inside a
     // string literal walked past the whole scan. Treat the escapes as the breaks
     // they stand for.
-    const scan = body.replace(/\\[nrt]/g, ' ');
+    const samples = e.name.startsWith('test/') || e.name === 'scripts/hygiene.mjs';
+    const scan = body.replace(/\\[nrt]/g, ' ').replace(samples ? PUBLIC_SAMPLES : /(?!)/g, ' ');
     for (const [re, what] of [...SECRETS, ...PERSONAL]) {
       const m = re.exec(scan);
       // Location and category only. Printing the match put the secret into the

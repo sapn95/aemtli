@@ -11,7 +11,7 @@ import { renderMarkdown } from './markdown.mjs';
 import { jobMeta } from '../run/meta.mjs';
 import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
-import { listRuns, readRun, readRunFile, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
+import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
 import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
@@ -358,6 +358,24 @@ export function createApp(deps) {
       const result = renderMarkdown(readRunFile(dataDir, run[1], run[2], 'result.md'));
       const { title } = recipeMeta(recipesDir, run[1]);
       return page(res, user, `${title} run`, runPage(record, title, result, readRunFile(dataDir, run[1], run[2], 'run.log'), displayZone));
+    }
+    // A file a job kept with a run: always a download, never shown inline.
+    const file = path.match(/^\/recipes\/([^/]+)\/runs\/([^/]+)\/files\/([^/]+)$/);
+    if (req.method === 'GET' && file && RECIPE_NAME.test(file[1]) && RUN_ID.test(file[2])) {
+      let fileName;
+      try {
+        fileName = decodeURIComponent(file[3]);
+      } catch {
+        return send(res, 404, 'text/plain', 'no such file');
+      }
+      // The name is checked before it goes into the header: letters, digits,
+      // dashes, underscores and one dot, so no quote can end the filename.
+      const found = readRunAttachment(dataDir, file[1], file[2], fileName);
+      if (!found) return send(res, 404, 'text/plain', 'no such file');
+      return send(res, 200, found.type, found.bytes, {
+        'content-disposition': `attachment; filename="${fileName}"`,
+        'cache-control': 'no-store',
+      });
     }
     const action = path.match(/^\/api\/recipes\/([^/]+)\/run$/);
     if (req.method === 'POST' && action && RECIPE_NAME.test(action[1])) return runNow(req, res, action[1]);
