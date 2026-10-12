@@ -4,7 +4,7 @@
 import { createInterface } from 'node:readline';
 
 const TOOLS = [
-  { name: 'read_thing', description: 'Reads a thing.', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
+  { name: 'read_thing', description: 'Reads a thing.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, bytes: { type: 'number' } } } },
   { name: 'send_thing', description: 'Sends a thing.', inputSchema: { type: 'object', properties: { to: { type: 'string' } } } },
   { name: 'secret_thing', description: 'Never for agents.', inputSchema: { type: 'object' } },
 ];
@@ -24,6 +24,8 @@ createInterface({ input: process.stdin }).on('line', line => {
       calls += 1;
       const { name, arguments: args = {} } = msg.params;
       if (args.crash) process.exit(3);
+      // A letter's PDF, as base64: megabytes on one line.
+      if (args.bytes) return ok({ content: [{ type: 'text', text: 'x'.repeat(Number(args.bytes)) }] });
       if (args.fail) return ok({ content: [{ type: 'text', text: `could not ${name}` }], isError: true });
       // The environment is how a real server gets its credentials.
       return ok({ content: [{ type: 'text', text: `${name} ${JSON.stringify(args)} call ${calls} secret=${process.env.FAKE_MCP_SECRET ?? 'none'} admin=${process.env.ADMIN_TOKEN_FILE ?? 'none'}` }] });
