@@ -295,6 +295,9 @@ export function createApp(deps) {
         if (action === 'archive') {
           if (!archivedFile) return sendJson(res, 503, { error: 'no place to keep that (STATE_DIR)' });
           if (typeof body.archived !== 'boolean') return sendJson(res, 400, { error: 'archived must be true or false' });
+          // Only a conversation goose keeps: an id that names none would take
+          // a place in a file that holds 500 of them.
+          if (body.archived) await chats.open(id);
           const away = archived();
           if (body.archived) away.add(id);
           else away.delete(id);

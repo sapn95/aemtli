@@ -413,6 +413,7 @@ test('a conversation can be put away and taken back out, and deleting it forgets
     const listed = async () => JSON.parse((await call('/api/chats')).body).chats.find(c => c.id === id);
     assert.equal((await listed()).archived, false);
     assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: 'yes' }, same)).status, 400);
+    assert.equal((await post(port, '/api/chats/made-up/archive', { archived: true }, same)).status, 404, 'no such conversation');
     assert.equal((await post(port, `/api/chats/${id}/archive`, { archived: true }, same)).status, 200);
     assert.equal((await listed()).archived, true);
     assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'chats-archived.json'), 'utf8')), [id]);
