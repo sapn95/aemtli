@@ -146,7 +146,7 @@ export async function runJob({
     mcp(gateway) {
       const url = gateways[gateway];
       if (!url) throw new Error(`no gateway "${gateway}" in MCP_GATEWAYS`);
-      const client = createMcpClient(url, { fetchImpl });
+      const client = createMcpClient(url, { fetchImpl, log });
       clients.push(client);
       return client;
     },

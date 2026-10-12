@@ -2,19 +2,43 @@
 // one session per client. Enough to call tools; nothing else.
 
 const PROTOCOL = '2025-06-18';
+// Errors where the request never reached the gateway: nothing listening yet,
+// or no address for it. A gateway restarts with every image bump and
+// installs its server first, which takes a minute or more; a job that starts
+// then waits for it instead of failing at once. Anything else (a reset, a
+// timeout) may have reached it, and is not repeated.
+const NOT_THERE = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
+const notThere = err => NOT_THERE.has(err?.cause?.code ?? err?.code);
 
 /** The text of a tool result, joined. */
 function textOf(result) {
   return (result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
 }
 
-export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, clientName = 'aemtli-job' } = {}) {
+export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, clientName = 'aemtli-job', waitMs = 180_000, retryMs = 5000, log = () => {} } = {}) {
   let sessionId = null;
   let opening = null;
   let nextId = 1;
 
+  /** One fetch, repeated while the gateway is not there yet, for up to waitMs. */
+  async function reach(init) {
+    const until = Date.now() + waitMs;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      } catch (err) {
+        if (!notThere(err) || Date.now() + retryMs > until) {
+          if (notThere(err) && attempt > 1) throw new Error(`${url} was not reachable for ${Math.round(waitMs / 1000)} s: ${err.message} (${err.cause?.code ?? err.code})`, { cause: err });
+          throw err;
+        }
+        if (attempt === 1) log(`${url} is not reachable (${err.cause?.code ?? err.code}); waiting for it`);
+        await new Promise(r => setTimeout(r, retryMs));
+      }
+    }
+  }
+
   async function post(message) {
-    const res = await fetchImpl(url, {
+    const res = await reach({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -22,7 +46,6 @@ export function createMcpClient(url, { fetchImpl = fetch, timeoutMs = 130_000, c
         ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
       },
       body: JSON.stringify(message),
-      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 202) return null;
     const body = await res.json().catch(() => null);

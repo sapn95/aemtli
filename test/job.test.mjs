@@ -343,3 +343,32 @@ test('release-watch: code reads and filters the feeds, the model only sums up wh
   assert.equal(second.tokens.total, 0);
   assert.match(read(dataDir, 'release-watch', second.id, 'result.md'), /^Nothing new since the last report\./);
 });
+
+test('a gateway that is not up yet is waited for; one that never comes up fails with how long it was given', async () => {
+  const refused = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  let tries = 0;
+  const lines = [];
+  const signals = [];
+  const fetchImpl = async (url, init) => {
+    tries++;
+    signals.push(init.signal);
+    if (tries < 3) throw refused();
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 's' } });
+  };
+  const late = createMcpClient('http://gw/mcp', { fetchImpl, retryMs: 5, waitMs: 1000, log: l => lines.push(l) });
+  await late.tools().catch(() => {});
+  assert.ok(tries >= 3, 'it kept trying');
+  // Each try has a deadline of its own, so the wait does not eat the call's.
+  assert.ok(signals.every(x => x instanceof AbortSignal));
+  assert.equal(new Set(signals).size, signals.length);
+  assert.deepEqual(lines, ['http://gw/mcp is not reachable (ECONNREFUSED); waiting for it']);
+
+  const never = createMcpClient('http://gw/mcp', { fetchImpl: async () => { throw refused(); }, retryMs: 5, waitMs: 30 });
+  await assert.rejects(never.tools(), /was not reachable for 0 s: fetch failed \(ECONNREFUSED\)/);
+
+  // A reset may have reached the gateway: not repeated.
+  let resets = 0;
+  const reset = createMcpClient('http://gw/mcp', { fetchImpl: async () => { resets++; throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }); }, retryMs: 5, waitMs: 1000 });
+  await assert.rejects(reset.tools(), /fetch failed/);
+  assert.equal(resets, 1);
+});
