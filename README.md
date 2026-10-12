@@ -64,7 +64,7 @@ dropped connection. goose's answers arrive as HTML that the server draws from
 their Markdown with the same rules as a run's result: no raw HTML, no script
 links, no images loaded.
 
-A conversation can be put away or deleted from the list. Archived ones are
+A conversation can be put away or deleted from the chat's own header. Archived ones are
 hidden until the page asks for them; where they are kept is ämtli's own
 business, because goose has no archive over ACP. Deleting one deletes it at
 goose, and that cannot be undone.

@@ -191,7 +191,13 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
   };
 
   async function getCard(id) {
-    return parseCardForm((await send(`${cardPath(id)}/edit`)).body);
+    try {
+      return parseCardForm((await send(`${cardPath(id)}/edit`)).body);
+    } catch (err) {
+      // The board answers its own 404 for a card that is not there, which
+      // reads like a broken address rather than a wrong number.
+      throw err.status === 404 ? Object.assign(new Error(`no card ${id} on this board`), { status: 404 }) : err;
+    }
   }
 
   /** The columns a card can go to; a board with one column has no choice to offer. */

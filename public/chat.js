@@ -69,7 +69,9 @@ async function refreshList() {
   away = new Set(chats.filter(c => c.archived).map(c => c.id));
   showArchived.parentElement.hidden = !away.size;
   showArchived.parentElement.lastChild.textContent = away.size === 1 ? ' Show 1 archived' : ` Show ${away.size} archived`;
-  showActions(chats.find(c => c.id === current)?.title);
+  const open = chats.find(c => c.id === current);
+  showActions(open?.title);
+  adoptIdle(open);
   const shown = chats.filter(c => !away.has(c.id) || showArchived.checked || c.id === current);
   list.replaceChildren(...shown.map(c => {
     const li = document.createElement('li');
@@ -157,6 +159,16 @@ function showStatus(next, question) {
   renderQuestion(question);
 }
 
+/**
+ * What the list says about the open conversation. A stream that dropped
+ * leaves the page thinking a turn is still running, and then nothing can be
+ * typed; the listing is the second opinion that frees the composer again.
+ * Only towards idle: a turn that is running must not be talked over.
+ */
+function adoptIdle(listed) {
+  if (listed && listed.status === 'idle' && status !== 'idle') showStatus('idle', null);
+}
+
 function drawAll(question) {
   log.replaceChildren(...events.map(render));
   showStatus(status, question);
@@ -214,6 +226,8 @@ function open(id) {
     state.textContent = mine.readyState === EventSource.CLOSED
       ? 'This conversation could not be opened. It may have been deleted.'
       : 'Reconnecting… goose keeps working meanwhile.';
+    // The listing still answers, and it says whether the turn is over.
+    refreshList();
   };
   refreshList();
 }

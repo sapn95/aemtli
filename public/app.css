@@ -18,6 +18,7 @@
   --royal: #2b4fd8;
   --royal-soft: #e4e9fb;
   --redpen: #c8342b;
+  --redpen-soft: #fbe9e7;
   --green: #2f7a4d;
   --amber: #a8641a;
   --rule: #d5dde4;
@@ -36,6 +37,7 @@
     --royal: #9db8ff;
     --royal-soft: #2c3b4f;
     --redpen: #ff8e84;
+    --redpen-soft: #3b2220;
     --green: #8fd3a4;
     --amber: #e8b46a;
     --rule: #34443e;
@@ -260,8 +262,16 @@ button {
   border: 1.5px solid var(--royal); background: var(--royal); color: var(--sheet);
 }
 button:hover:not(:disabled) { filter: brightness(1.08); }
-button:disabled { opacity: 0.45; cursor: default; }
-.quiet-button { background: transparent; color: var(--royal); }
+/* A button that cannot be used says so by going quiet, not by fading the
+   fill: a half-transparent royal slab reads as a grey smear in the dark. */
+button:disabled { background: transparent; border-color: var(--rule); color: var(--pencil); cursor: default; filter: none; }
+.quiet-button { background: transparent; border-color: transparent; color: var(--royal); }
+.quiet-button:hover:not(:disabled) { background: var(--royal-soft); filter: none; }
+.quiet-button.danger { color: var(--redpen); }
+.quiet-button.danger:hover:not(:disabled) { background: var(--redpen-soft); }
+/* A quiet button that cannot be used stays quiet: a box around it would
+   shout louder than the one beside it that can. */
+.quiet-button:disabled { border-color: transparent; color: var(--pencil); }
 
 .notice { min-height: 1.5rem; color: var(--pencil); margin: 0.75rem 0 0; }
 .notice:empty { min-height: 0; margin: 0; }
@@ -322,7 +332,9 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* The conversations goose keeps on the left, the open one on the right. */
 .chat-page { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 0 2rem; margin-top: 1rem; }
 .chat-side { border-right: 1px solid var(--rule); padding-right: 1.25rem; min-width: 0; }
-.chat-side #new { width: 100%; margin-bottom: 0.75rem; }
+/* The one action in the sidebar keeps its outline: plain text does not read
+   as a button, and this is what a new reader looks for. */
+.chat-side #new { width: 100%; margin-bottom: 0.75rem; border-color: var(--royal); }
 .chats-list { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
 .chat-item { display: flex; flex-direction: column; padding: 0.45rem 0.5rem; border-radius: 5px; color: var(--ink); text-decoration: none; }
 .chat-item:hover { background: var(--royal-soft); }
@@ -334,7 +346,6 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat-main { min-width: 0; }
 .chat-main .chat-bar { margin-top: 0; }
 .chat-item.archived .title { color: var(--pencil); }
-.quiet-button.danger { color: var(--redpen); }
 .show-archived { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; color: var(--pencil); font-size: 0.875rem; }
 
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; margin-top: 1rem; }
@@ -351,6 +362,10 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
 .msg { max-width: 46rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user { align-self: flex-end; background: var(--royal-soft); padding: 0.5rem 0.85rem; border-radius: 6px; }
 .msg.agent { align-self: flex-start; }
+/* The two buttons that act on the open conversation: text, not boxes, and
+   small enough that the title keeps the room. */
+.chat-bar .quiet-button { padding: 0.35rem 0.6rem; font-size: 0.9375rem; }
+
 /* goose's answers drawn from Markdown: block spacing instead of kept newlines,
    and the first and last block flush with the bubble. */
 .msg.agent.md { white-space: normal; }

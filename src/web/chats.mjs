@@ -366,11 +366,23 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       });
     },
 
-    /** Stops the turn that is running. */
+    /**
+     * Stops the turn that is running. goose answers the prompt with
+     * "cancelled" and the status follows; a goose that says nothing at all
+     * would leave the conversation unusable, so after `answerMs` the
+     * conversation is called idle anyway and says so.
+     */
     async stop(id) {
       await open();
       socket?.send(JSON.stringify({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: id } }));
-      dropQuestions(chat(id), true);
+      const c = chat(id);
+      dropQuestions(c, true);
+      if (c.status === 'idle') return;
+      setTimeout(() => {
+        if (c.status === 'idle') return;
+        push(c, { type: 'note', text: 'Stopped. goose did not say that it stopped, so the next message may be refused while it finishes.' });
+        setStatus(c, 'idle');
+      }, answerMs).unref?.();
     },
 
     /** Answers the question that waits, with one of its options. */

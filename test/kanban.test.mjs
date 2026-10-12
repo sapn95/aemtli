@@ -104,6 +104,8 @@ test('wrong board, column, date or id: refused with what there is, nothing poste
   await assert.rejects(kanban.createCard('aemtli', { title: 'x', column: 'Doing' }), /no column "Doing"; there are: To Do, In Progress, Done/);
   await assert.rejects(kanban.createCard('aemtli', { title: 'x', due: '31.10.2026' }), /not a date/);
   await assert.rejects(kanban.getCard('1/../../boards'), err => err.status === 400);
+  const gone = createKanban({ baseUrl: 'http://k', fetchImpl: async () => new Response('404 page not found\n', { status: 404 }) });
+  await assert.rejects(gone.getCard(4711), err => err.status === 404 && /no card 4711 on this board/.test(err.message));
   await assert.rejects(kanban.archiveCard(0), err => err.status === 400);
   assert.equal(posts.length, 0);
 });
