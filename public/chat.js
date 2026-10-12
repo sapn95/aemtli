@@ -24,6 +24,9 @@ let current = null;
 let stream = null;
 let events = [];
 let status = 'idle';
+// Counts the turns of the open conversation, so a listing that started
+// before one cannot say anything about it.
+let turns = 0;
 // Which conversations are put away, as the last listing said.
 let away = new Set();
 
@@ -59,6 +62,7 @@ function showActions(title) {
 
 /** The list of conversations, newest first; the open one marked. */
 async function refreshList() {
+  const asked = { id: current, turn: turns };
   let chats;
   try {
     ({ chats } = await api('/api/chats'));
@@ -71,7 +75,7 @@ async function refreshList() {
   showArchived.parentElement.lastChild.textContent = away.size === 1 ? ' Show 1 archived' : ` Show ${away.size} archived`;
   const open = chats.find(c => c.id === current);
   showActions(open?.title);
-  adoptIdle(open);
+  adoptIdle(open, asked);
   const shown = chats.filter(c => !away.has(c.id) || showArchived.checked || c.id === current);
   list.replaceChildren(...shown.map(c => {
     const li = document.createElement('li');
@@ -152,6 +156,7 @@ function renderQuestion(question) {
 }
 
 function showStatus(next, question) {
+  if (next === 'running' && status !== 'running') turns += 1;
   status = next;
   state.textContent = STATE_WORDS[status] ?? status;
   send.disabled = status !== 'idle';
@@ -165,7 +170,8 @@ function showStatus(next, question) {
  * typed; the listing is the second opinion that frees the composer again.
  * Only towards idle: a turn that is running must not be talked over.
  */
-function adoptIdle(listed) {
+function adoptIdle(listed, asked) {
+  if (asked.id !== current || asked.turn !== turns) return;
   if (listed && listed.status === 'idle' && status !== 'idle') showStatus('idle', null);
 }
 
@@ -180,6 +186,7 @@ function open(id) {
   stream?.close();
   current = id;
   events = [];
+  turns += 1;
   log.replaceChildren();
   mode.disabled = !id;
   showActions();

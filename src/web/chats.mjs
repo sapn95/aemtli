@@ -39,7 +39,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
   function chat(id) {
     let c = chats.get(id);
     if (!c) {
-      c = { id, events: [], status: 'idle', question: null, queue: [], mode: null, title: null, watchers: new Set(), loaded: false, loading: null, touched: Date.now() };
+      c = { id, events: [], status: 'idle', question: null, queue: [], mode: null, title: null, watchers: new Set(), loaded: false, loading: null, touched: Date.now(), turn: 0 };
       forgetIdle();
       chats.set(id, c);
     }
@@ -350,6 +350,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       const last = c.events.at(-1);
       if (last) last.closed = true;
       push(c, { type: 'user', text, closed: true });
+      c.turn += 1;
       setStatus(c, 'running');
       call('session/prompt', { sessionId: id, prompt: [{ type: 'text', text }] }, 0).then(result => {
         drawNow(c);
@@ -378,8 +379,10 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       const c = chat(id);
       dropQuestions(c, true);
       if (c.status === 'idle') return;
+      // The turn this stops, so a later one is never called idle by it.
+      const turn = c.turn;
       setTimeout(() => {
-        if (c.status === 'idle') return;
+        if (c.status === 'idle' || c.turn !== turn) return;
         push(c, { type: 'note', text: 'Stopped. goose did not say that it stopped, so the next message may be refused while it finishes.' });
         setStatus(c, 'idle');
       }, answerMs).unref?.();
