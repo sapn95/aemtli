@@ -320,3 +320,37 @@ test('a goose that refuses to start is closed, and the next call tries again', a
   assert.deepEqual(await b.list(), []);
   assert.equal(goose.sockets.length, 2);
 });
+
+test('goose\'s words go to the page as rendered Markdown, drawn while somebody watches', async () => {
+  const goose = fakeGoose();
+  const renders = [];
+  const b = createChatBroker({ connect: goose.connect, cwd: '/w', render: t => { renders.push(t); return `<p>${t}</p>`; }, renderMs: 5 });
+  const { id } = await b.create();
+  await b.say(id, 'Hoi');
+  await settle();
+  assert.deepEqual(renders, [], 'nobody watching, nothing drawn');
+  const w = watcher();
+  await b.watch(id, w);
+  assert.deepEqual(w.frames[0].events.map(e => e.html ?? null), [null, '<p>Hallo zäme</p>'], 'the snapshot carries it');
+  await b.say(id, 'Hoi nomau');
+  await settle();
+  assert.ok(w.frames.filter(f => f.kind === 'append').every(f => f.html === undefined), 'pieces go as text');
+  const drawn = w.frames.filter(f => f.kind === 'replace' && f.event.type === 'agent');
+  assert.equal(drawn.at(-1).event.html, '<p>Hallo zäme</p>', 'the whole answer, drawn once it is there');
+  assert.ok(drawn.length <= 2, `${drawn.length} drawings for one answer`);
+  assert.equal(w.frames.find(f => f.kind === 'event' && f.event.type === 'user' && f.event.text === 'Hoi nomau').event.html, undefined, 'what was typed stays text');
+  assert.equal(b.chats.get(id).events.at(-1).html, undefined, 'the stored event keeps only its text');
+});
+
+test('an answer is drawn whole when it ends, however long the wait between drawings', async () => {
+  const goose = fakeGoose();
+  const b = createChatBroker({ connect: goose.connect, cwd: '/w', render: t => `<p>${t}</p>`, renderMs: 60_000 });
+  const { id } = await b.create();
+  const w = watcher();
+  await b.watch(id, w);
+  await b.say(id, 'Hoi');
+  await settle();
+  const drawn = w.frames.filter(f => f.kind === 'replace' && f.event.type === 'agent');
+  assert.deepEqual(drawn.map(f => f.event.html), ['<p>Hallo zäme</p>']);
+  b.close();
+});

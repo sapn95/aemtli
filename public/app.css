@@ -310,6 +310,11 @@ button:disabled { opacity: 0.45; cursor: default; }
 
 .log { margin-top: 2rem; }
 .log summary { cursor: pointer; color: var(--pencil); }
+/* Files a job kept with its run: plain download links under the result. */
+.files { margin: 1.25rem 0; }
+.files h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+.files ul { margin: 0; padding-left: 1.1rem; }
+.files .quiet { color: var(--pencil); font-size: 0.875rem; }
 .log pre { font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 0.75rem 1rem; max-height: 28rem; overflow: auto; }
 
 /* ---- chat ---------------------------------------------------------------- */
@@ -343,6 +348,12 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
 .msg { max-width: 46rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user { align-self: flex-end; background: var(--royal-soft); padding: 0.5rem 0.85rem; border-radius: 6px; }
 .msg.agent { align-self: flex-start; }
+/* goose's answers drawn from Markdown: block spacing instead of kept newlines,
+   and the first and last block flush with the bubble. */
+.msg.agent.md { white-space: normal; }
+.msg.agent.md > :first-child { margin-top: 0; }
+.msg.agent.md > :last-child { margin-bottom: 0; }
+.msg.agent.md pre { white-space: pre; }
 .msg.tool { align-self: flex-start; color: var(--pencil); font-size: 0.875rem; padding-left: 0.75rem; border-left: 2px solid var(--rule); }
 .msg.tool[data-status="completed"] { border-left-color: var(--green); }
 .msg.tool[data-status="failed"] { color: var(--redpen); border-left-color: var(--redpen); }

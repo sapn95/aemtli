@@ -10,6 +10,12 @@
 //   ctx.notify({...})        one push through ntfy, when the run is worth a
 //                            look on a phone
 //   ctx.pdfText(bytes)       a PDF's text, laid out as on the page
+//   ctx.qr(bytes)            the QR codes on a PDF's first pages, as text
+//   ctx.bills(bytes)         the Swiss QR bills on a PDF, read and checked
+//   ctx.paymentFile({...})   a pain.001 file for e-banking (see pain001.mjs)
+//   ctx.attach(name, data)   a file kept with the run, downloadable from its
+//                            page (a payment file, a list)
+//   ctx.runLink              this run's page, for a push that opens it
 //   ctx.state                JSON kept between runs of this job (save with
 //                            ctx.saveState()), e.g. what was already reported
 //   ctx.fetch, ctx.log, ctx.now, ctx.params
@@ -20,17 +26,46 @@
 //
 // The model gets text and returns text: no tools, so whatever a letter or a
 // web page says cannot make it do anything.
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { mkdtemp, writeFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
-import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME } from '../store/runs.mjs';
+import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME, ATTACHMENT_NAME, ATTACHMENT_TYPES } from '../store/runs.mjs';
 import { createMcpClient } from './mcp-client.mjs';
 import { jobCards } from './cards.mjs';
+import { parseSwissQr } from './swissqr.mjs';
+import { buildPain001 } from './pain001.mjs';
 
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
 const THINKING_ROOM = 2048;
+const ATTACHMENT_MAX = 10 * 1024 * 1024;
+const ATTACHMENTS_PER_RUN = 20;
+// A PDF the QR reader takes, and the longest side a page is drawn at: A4 at
+// 300 dpi is 3508 pixels, and a page that claims to be two metres tall is
+// drawn no bigger.
+const QR_PDF_MAX = 25 * 1024 * 1024;
+const QR_PIXELS = 3600;
+
+/** Runs a program on its arguments; resolves with its stdout and exit code, or rejects with its first line of error. */
+const run = (cmd, args, { okCodes = [0], timeout = 60_000 } = {}) => new Promise((resolve, reject) => {
+  execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, timeout, encoding: 'utf8' }, (err, stdout) => {
+    if (!err || okCodes.includes(err.code)) resolve({ stdout: stdout ?? '', code: err?.code ?? 0 });
+    else reject(new Error(`${cmd}: ${String(err.message).split('\n')[0]}`));
+  });
+});
+
+/** The symbols in zbarimg's XML: text as it is, binary data from base64. */
+export function zbarSymbols(xml) {
+  const out = [];
+  for (const [, attrs, cdata, plain] of String(xml).matchAll(/<data([^>]*)>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/data>/g)) {
+    const raw = cdata ?? plain ?? '';
+    out.push(/format=['"]base64['"]/.test(attrs) ? Buffer.from(raw, 'base64').toString('utf8') : raw);
+  }
+  return out;
+}
 
 /** The model client, through the model proxy that holds the real key. */
 function anthropicFrom(env) {
@@ -85,6 +120,7 @@ export async function runJob({
     ? { url: new URL(env.NTFY_URL).origin + new URL(env.NTFY_URL).pathname.replace(/\/$/, ''), topic: env.NTFY_TOPIC, tokenFile: env.NTFY_TOKEN_FILE }
     : null;
 
+  const files = [];
   const tokens = { input: 0, output: 0, total: 0 };
   const models = new Set();
   const clients = [];
@@ -94,6 +130,68 @@ export async function runJob({
     log,
     fetch: fetchImpl,
     now,
+    runLink: env.PUBLIC_ORIGIN ? `${env.PUBLIC_ORIGIN.replace(/\/$/, '')}/recipes/${name}/runs/${id}` : undefined,
+    /**
+     * Keeps a file with this run, for the owner to download from the run
+     * page. `name` is a plain file name, `type` one of ATTACHMENT_TYPES; a
+     * second file of the same name replaces the first.
+     */
+    attach(fileName, data, type = 'text/plain') {
+      if (!ATTACHMENT_NAME.test(fileName)) throw new Error(`not a file name for a run: ${fileName}`);
+      if (!ATTACHMENT_TYPES.has(type)) throw new Error(`not a type a run keeps: ${type}`);
+      const bytes = Buffer.from(data);
+      if (bytes.length > ATTACHMENT_MAX) throw new Error(`${fileName} is ${bytes.length} bytes, over ${ATTACHMENT_MAX}`);
+      mkdirSync(join(dir, 'files'), { recursive: true });
+      writeFileSync(join(dir, 'files', fileName), bytes);
+      const entry = { name: fileName, type, bytes: bytes.length };
+      const at = files.findIndex(f => f.name === fileName);
+      if (at < 0 && files.length >= ATTACHMENTS_PER_RUN) throw new Error(`a run keeps at most ${ATTACHMENTS_PER_RUN} files`);
+      if (at >= 0) files[at] = entry;
+      else files.push(entry);
+      log(`kept ${fileName} (${bytes.length} bytes)`);
+      return entry;
+    },
+    /**
+     * The QR codes on the first `pages` pages of a PDF, as their text, in
+     * page order: pdftoppm draws the pages, zbarimg reads the codes. An
+     * empty list when there are none.
+     */
+    /**
+     * The Swiss QR bills on a PDF: for each code that is one, { ok, bill }
+     * or { ok: false, why } from swissqr.mjs. Other codes are left out.
+     */
+    async bills(bytes) {
+      return (await ctx.qr(bytes)).filter(code => code.startsWith('SPC')).map(parseSwissQr);
+    },
+    /** A pain.001 payment file from bills; buildPain001 says what it takes. */
+    paymentFile({ debtor, payments, messageId }) {
+      return buildPain001({ debtor, payments, messageId, now: now() });
+    },
+    async qr(bytes, { pages = 8 } = {}) {
+      const pdf = Buffer.from(bytes);
+      if (pdf.length > QR_PDF_MAX) throw new Error(`a PDF of ${pdf.length} bytes is over the ${QR_PDF_MAX} the QR reader takes`);
+      const work = await mkdtemp(join(tmpdir(), 'aemtli-qr-'));
+      try {
+        await writeFile(join(work, 'in.pdf'), pdf);
+        const info = (await run('pdfinfo', [join(work, 'in.pdf')])).stdout;
+        const total = Number(/^Pages:\s+(\d+)/m.exec(info)?.[1] ?? 0);
+        if (total > pages) log(`the PDF has ${total} pages; QR codes were looked for on the first ${pages}`);
+        await run('pdftoppm', ['-scale-to', String(QR_PIXELS), '-l', String(pages), '-png', join(work, 'in.pdf'), join(work, 'page')]);
+        const images = (await readdir(work)).filter(f => f.endsWith('.png')).sort().map(f => join(work, f));
+        if (!images.length) return [];
+        // 4 is zbarimg's "nothing found". 1 is "an image could not be
+        // read", which can be one page of several: what the others gave
+        // still counts, and the page is named in the log.
+        const { stdout, code } = await run('zbarimg', ['--quiet', '--xml', '-Sdisable', '-Sqrcode.enable', ...images], { okCodes: [1, 4] });
+        if (code === 1) {
+          if (!stdout.includes('<barcodes')) throw new Error('zbarimg could not read the pages');
+          log('zbarimg could not read every page; the codes it found on the others are used');
+        }
+        return [...new Set(zbarSymbols(stdout))];
+      } finally {
+        await rm(work, { recursive: true, force: true });
+      }
+    },
     saveState() {
       writeJsonAtomic(statePath, ctx.state);
     },
@@ -208,6 +306,7 @@ export async function runJob({
     tokens,
     model: models.size ? [...models].join(', ') : null,
     error,
+    ...(files.length ? { files } : {}),
   });
   writeJsonAtomic(join(dir, 'run.json'), record);
   pruneRuns(dataDir, name, keep);

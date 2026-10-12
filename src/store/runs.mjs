@@ -13,6 +13,10 @@ import { randomBytes } from 'node:crypto';
 
 export const RECIPE_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 export const RUN_ID = /^\d{8}T\d{6}Z-[0-9a-f]{4}$/;
+// A file a job keeps with its run: a plain name, and one of a few types the
+// UI hands out as a download and never shows inline.
+export const ATTACHMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}(\.[A-Za-z0-9]{1,8})?$/;
+export const ATTACHMENT_TYPES = new Set(['application/xml', 'text/csv', 'text/plain', 'application/pdf', 'application/json']);
 
 /** A new, sortable run id for the moment `date`: 20261011T081300Z-1a2b. */
 export function newRunId(date = new Date()) {
@@ -59,10 +63,10 @@ function realDir(path) {
 
 /**
  * Reads at most `max` bytes of a regular file without following a symlink or
- * blocking on a FIFO; with `tail`, the last `max` bytes. Null if it is not a
- * regular file or cannot be read.
+ * blocking on a FIFO; with `tail`, the last `max` bytes; with `raw`, as bytes
+ * rather than text. Null if it is not a regular file or cannot be read.
  */
-function readCapped(path, max, tail = false) {
+function readCapped(path, max, tail = false, raw = false) {
   let fd;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -71,7 +75,7 @@ function readCapped(path, max, tail = false) {
     const length = Math.min(st.size, max);
     const buffer = Buffer.alloc(length);
     readSync(fd, buffer, 0, length, tail ? st.size - length : 0);
-    return buffer.toString('utf8');
+    return raw ? buffer : buffer.toString('utf8');
   } catch {
     return null;
   } finally {
@@ -104,6 +108,21 @@ export function readRunFile(dataDir, recipe, id, file) {
   if (!['result.md', 'run.log'].includes(file)) throw new Error(`not a run file: ${file}`);
   const dir = checkedRunDir(dataDir, recipe, id);
   return (dir && readCapped(join(dir, file), LIMITS[file], file === 'run.log')) ?? '';
+}
+
+/**
+ * A file a job kept with its run, as { bytes, type }: only one that run.json
+ * lists with an allowed type, and only a regular file in the run's files
+ * directory. Null otherwise.
+ */
+export function readRunAttachment(dataDir, recipe, id, name) {
+  if (!ATTACHMENT_NAME.test(String(name))) return null;
+  const entry = readRun(dataDir, recipe, id)?.files?.find(f => f.name === name);
+  if (!entry || !ATTACHMENT_TYPES.has(entry.type)) return null;
+  const dir = checkedRunDir(dataDir, recipe, id);
+  if (!dir || !realDir(join(dir, 'files'))) return null;
+  const bytes = readCapped(join(dir, 'files', name), 10 * 1024 * 1024, false, true);
+  return bytes ? { bytes, type: entry.type } : null;
 }
 
 /** Run ids of a recipe, newest first. */

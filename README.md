@@ -60,7 +60,9 @@ that it waits. When nobody is watching, another push says that the answer is
 there. The page lists the conversations goose keeps (it stores them on
 `aemtli-goose`), opens one by replaying it, and follows it through a stream
 of server-sent events that the browser picks up again by itself after a
-dropped connection.
+dropped connection. goose's answers arrive as HTML that the server draws from
+their Markdown with the same rules as a run's result: no raw HTML, no script
+links, no images loaded.
 
 `/api/chats` lists them and starts one; `/api/chats/<id>/events` is the
 stream; `say`, `stop`, `answer` and `mode` change a conversation, from this
@@ -98,6 +100,16 @@ export default async function (ctx) {
   returns false, and a refused push never fails the run.
 - `ctx.pdfText(bytes)` returns a PDF's text as `pdftotext -layout` lays it
   out (poppler is in the image), for lists and letters parsed in code.
+- `ctx.qr(bytes)` returns the text of the QR codes on a PDF's first three
+  pages (`pdftoppm` draws them, `zbarimg` reads them; both are in the image).
+  `src/run/swissqr.mjs` reads a Swiss QR bill from that text and checks it
+  the way a bank does, and `src/run/pain001.mjs` writes the bills into a
+  pain.001.001.09 payment file (Swiss Payment Standards 2022, CHF), which
+  e-banking imports and shows before anything is paid.
+- `ctx.attach(name, data, type)` keeps a file with the run (a payment file, a
+  list), up to 10 MB, typed as XML, CSV, text, PDF or JSON. The run page lists
+  it, and it downloads; it is never shown in the page. `ctx.runLink` is the
+  run page's address, for a push that should open it.
 - `ctx.cards({ board })` keeps cards on the kanban board for what waits for
   the owner, through the gateway named `kanban`. `ensure(ref, { title,
   description, due, subtasks, column })` adds a card once per reference,
