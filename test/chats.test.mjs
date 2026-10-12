@@ -374,3 +374,25 @@ test('a goose that will not even say it stopped leaves the conversation usable',
   assert.match(c.events.at(-1).text, /did not say that it stopped/);
   b.close();
 });
+
+test('a stop that goose never answers does not reach the next turn', async () => {
+  const goose = fakeGoose();
+  const b = createChatBroker({ connect: goose.connect, cwd: '/w', answerMs: 60 });
+  const { id } = await b.create();
+  const c = b.chats.get(id);
+  await b.say(id, 'SLOW');
+  await settle();
+  const quiet = goose.sockets.at(-1).send;
+  goose.sockets.at(-1).send = () => {};
+  await b.stop(id);
+  // The turn ends by itself after all, and the next one starts.
+  goose.sockets.at(-1).send = quiet;
+  c.status = 'idle';
+  await b.say(id, 'SLOW again');
+  await settle();
+  assert.equal(c.status, 'running');
+  await new Promise(r => setTimeout(r, 110));
+  assert.equal(c.status, 'running', 'the old stop left this turn alone');
+  assert.ok(!c.events.some(e => /did not say that it stopped/.test(e.text ?? '')));
+  b.close();
+});
