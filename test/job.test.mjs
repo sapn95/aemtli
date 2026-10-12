@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -439,6 +439,7 @@ test('the QR reader: a page it cannot read costs that page only, a huge PDF is r
       'a run keeps at most 20 files',
     ]);
     assert.equal(run.files.length, 20);
+    assert.equal(readdirSync(join(dataDir, 'runs', 'limits', run.id, 'files')).length, 20, 'the refused 21st was never written');
     assert.match(read(dataDir, 'limits', run.id, 'run.log'), /zbarimg could not read every page/);
     copyFileSync(join(bin, 'zbarimg-none'), join(bin, 'zbarimg'));
     const failed = await runJob({ name: 'broken', recipesDir, dataDir, params: { pdf: pdf.toString('base64') }, anthropic: null });

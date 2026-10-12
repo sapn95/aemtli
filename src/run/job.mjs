@@ -141,11 +141,11 @@ export async function runJob({
       if (!ATTACHMENT_TYPES.has(type)) throw new Error(`not a type a run keeps: ${type}`);
       const bytes = Buffer.from(data);
       if (bytes.length > ATTACHMENT_MAX) throw new Error(`${fileName} is ${bytes.length} bytes, over ${ATTACHMENT_MAX}`);
+      const at = files.findIndex(f => f.name === fileName);
+      if (at < 0 && files.length >= ATTACHMENTS_PER_RUN) throw new Error(`a run keeps at most ${ATTACHMENTS_PER_RUN} files`);
       mkdirSync(join(dir, 'files'), { recursive: true });
       writeFileSync(join(dir, 'files', fileName), bytes);
       const entry = { name: fileName, type, bytes: bytes.length };
-      const at = files.findIndex(f => f.name === fileName);
-      if (at < 0 && files.length >= ATTACHMENTS_PER_RUN) throw new Error(`a run keeps at most ${ATTACHMENTS_PER_RUN} files`);
       if (at >= 0) files[at] = entry;
       else files.push(entry);
       log(`kept ${fileName} (${bytes.length} bytes)`);
