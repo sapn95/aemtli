@@ -95,7 +95,22 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem; }
 .plan-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
 .plan-head p { margin: 0; color: var(--pencil); }
 
+/* Search and the favourites filter: quiet, above the chart. */
+.find { display: flex; gap: 0.6rem; align-items: center; margin: 1rem 0 0; }
+.find input {
+  flex: 0 1 22rem; min-width: 0; font: inherit; color: var(--ink); background: var(--sheet);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 0.4rem 0.65rem;
+}
+.find input::placeholder { color: var(--pencil); }
+.chip {
+  font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  border: 1px solid var(--rule); background: transparent; color: var(--pencil);
+}
+.chip[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
+
 .chores { list-style: none; margin: 1rem 0 0; padding: 0; }
+.chore[hidden] { display: none; }
 
 .chore {
   display: grid;
@@ -110,6 +125,13 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem; }
 
 .head { grid-area: head; min-width: 0; }
 .head .name { font-size: 1.0625rem; font-weight: 700; color: var(--ink); text-decoration: none; }
+/* The star sits before the name; filled and amber when it is a favourite. */
+.fav {
+  font: inherit; font-size: 1rem; line-height: 1; cursor: pointer;
+  border: 0; background: none; padding: 0 0.35rem 0 0; color: var(--pencil); vertical-align: 0.05em;
+}
+.fav[aria-pressed="true"] { color: var(--amber); }
+.fav:hover { color: var(--amber); filter: none; }
 .head .name:hover { text-decoration: underline; }
 /* The schedule in words, as loud as the name: it is what the page is about. */
 .head .when { margin: 0.1rem 0 0; font-size: 0.9375rem; color: var(--royal); }
@@ -213,27 +235,6 @@ a.mark:hover { text-decoration: underline; }
 .down { color: var(--redpen); margin: 0.5rem 0 0; }
 .history details { margin-top: 0.4rem; }
 .history summary { cursor: pointer; color: var(--pencil); font-size: 0.875rem; }
-
-/* ---- coming up ---------------------------------------------------------- */
-
-.chores { list-style: none; margin: 0; padding: 0; }
-.chore {
-  display: grid;
-  grid-template-columns: 8.5rem minmax(0, 1fr) 11rem auto;
-  gap: 1.25rem; align-items: start;
-  padding: 1rem 0; border-top: 1px solid var(--rule);
-}
-.chore:last-child { border-bottom: 1px solid var(--rule); }
-.next .day { display: block; color: var(--pencil); font-size: 0.875rem; }
-.next .time { display: block; font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
-.never { color: var(--pencil); font-size: 0.875rem; }
-.what .name { font-size: 1.125rem; font-weight: 700; color: var(--ink); text-decoration: none; }
-.what .name:hover { text-decoration: underline; }
-.what p { margin: 0.15rem 0 0; }
-.desc { color: var(--pencil); max-width: 34rem; }
-.sched { font-size: 0.875rem; }
-.last { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.875rem; }
-.last .label { color: var(--pencil); }
 
 .status { font-weight: 700; }
 .status.succeeded { color: var(--green); }

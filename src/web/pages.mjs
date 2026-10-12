@@ -152,8 +152,11 @@ function chore(it, now, timeZone) {
   const last = it.lastRun
     ? `<a href="/recipes/${esc(it.name)}/runs/${esc(it.lastRun.id)}">${status(it.lastRun.status)} ${esc(when(it.lastRun.startedAt, timeZone))}</a>`
     : status(null);
-  return `<li class="chore">
+  // What the search box matches: the name, the title, the words and the description.
+  const words = [it.name, it.title, it.scheduleText, it.description].filter(Boolean).join(' ').toLowerCase();
+  return `<li class="chore" data-search="${esc(words)}"${it.favorite ? ' data-fav="1"' : ''}>
   <div class="head">
+    <button type="button" class="fav" data-recipe="${esc(it.name)}" aria-pressed="${it.favorite ? 'true' : 'false'}" aria-label="Favourite: ${esc(it.title)}" title="${it.favorite ? 'A favourite' : 'Make it a favourite'}">${it.favorite ? '★' : '☆'}</button>
     <a class="name" href="/recipes/${esc(it.name)}"${it.description ? ` title="${esc(it.description)}"` : ''}>${esc(it.title)}</a>
     <p class="when" title="${esc(it.schedule)} (${esc(it.timeZone)})">${esc(schedule)}</p>
   </div>
@@ -168,14 +171,20 @@ function chore(it, now, timeZone) {
 
 /** The Ämtliplan: every chore with its schedule and this week. */
 function plan(items, week, now, timeZone) {
-  const ordered = [...items].sort((a, b) => (a.nextRun ?? '9999').localeCompare(b.nextRun ?? '9999'));
+  // Favourites first, then by when they run next.
+  const ordered = [...items].sort((a, b) => (b.favorite - a.favorite) || (a.nextRun ?? '9999').localeCompare(b.nextRun ?? '9999'));
   const range = `${fmt(week.days[0].start, timeZone, { day: 'numeric', month: 'short' })} to ${fmt(week.days[6].start, timeZone, { day: 'numeric', month: 'short' })}`;
   return `<section class="plan" aria-labelledby="plan-title">
 <div class="plan-head"><h1 id="plan-title">This week</h1><p>${esc(range)}</p></div>
+<div class="find" role="search">
+  <input type="search" id="find" placeholder="Search ${items.length} chores" aria-label="Search chores" autocomplete="off" spellcheck="false">
+  <button type="button" id="only-fav" class="chip" aria-pressed="false">★ Favourites</button>
+</div>
 ${weekHead(week, timeZone)}
 <ul class="chores">
 ${ordered.map(it => chore(it, now, timeZone)).join('\n')}
 </ul>
+<p id="none" class="quiet" hidden>Nothing matches.</p>
 <p id="notice" class="notice" role="status"></p>
 </section>`;
 }

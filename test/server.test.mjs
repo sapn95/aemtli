@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -35,7 +35,7 @@ function fakeK8s({ running = false, fail = false, schedule = '13 8 * * 1', creat
 }
 
 /** Starts the UI against temp dirs; `body` gets a request helper. */
-async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
+async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, stateDir = true, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aemtli-ui-'));
   const recipesDir = join(root, 'recipes');
   const dataDir = join(root, 'data');
@@ -50,7 +50,7 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
     writeJsonAtomic(join(createRunDir(dataDir, 'hello', id), 'run.json'), { recipe: 'hello', id, status: 'succeeded', trigger, startedAt, durationMs: 1000 });
   }
   const lines = [];
-  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
+  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
   const port = server.address().port;
   /** One request; `token` null means no Access header. */
   const call = (path, { method = 'GET', token = 'good', headers = {} } = {}) => new Promise((resolve, reject) => {
@@ -65,7 +65,7 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
     req.end();
   });
   try {
-    await body({ call, k8s, lines, port });
+    await body({ call, k8s, lines, port, root });
   } finally {
     await new Promise(r => { server.closeAllConnections(); server.close(r); });
   }
@@ -265,3 +265,29 @@ test('a malformed request target is refused, on plain requests and upgrades, and
     await raw(`GET //[ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${key}\r\n\r\n`);
     assert.equal((await call('/healthz', { token: null })).status, 200);
   }));
+
+test('favourites: a star from the same origin is kept on the server and comes first', () =>
+  withUi(async ({ call, root }) => {
+    const star = (name, on, headers = { origin: ORIGIN, 'sec-fetch-site': 'same-origin' }) => call(`/api/favorites/${name}/${on ? 'on' : 'off'}`, { method: 'POST', headers });
+    let page = (await call('/')).body;
+    assert.ok(page.indexOf('>Hello &lt;b&gt;world') < page.indexOf('>paused</a>'), 'by next run: hello before the paused one');
+    assert.match(page, /<input type="search" id="find" placeholder="Search 2 chores"/);
+    assert.match(page, /data-search="hello hello &lt;b&gt;world&lt;\/b&gt; mondays at 08:13 says &quot;hi&quot; &amp; leaves"/);
+    assert.equal((await star('paused', true, { origin: 'https://evil.example' })).status, 403);
+    assert.equal((await star('Not_A_Name', true)).status, 404);
+    assert.equal((await star('paused', true)).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'favorites.json'), 'utf8')), ['paused']);
+    page = (await call('/')).body;
+    assert.ok(page.indexOf('>paused</a>') < page.indexOf('>Hello &lt;b&gt;world'), 'a favourite comes first');
+    assert.match(page, /<li class="chore" data-search="paused[^"]*" data-fav="1">/);
+    assert.match(page, /<button type="button" class="fav" data-recipe="paused" aria-pressed="true"[^>]*>★<\/button>/);
+    assert.equal((await star('paused', false)).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'state', 'favorites.json'), 'utf8')), []);
+    assert.equal((await call('/api/favorites/paused/on')).status, 404, 'GET is not a star');
+  }));
+
+test('without a state directory there are no favourites to keep, and the page says nothing of it', () =>
+  withUi(async ({ call }) => {
+    assert.equal((await call('/api/favorites/hello/on', { method: 'POST', headers: { origin: ORIGIN } })).status, 503);
+    assert.doesNotMatch((await call('/')).body, /data-fav=/);
+  }, { stateDir: false }));

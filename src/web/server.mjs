@@ -2,7 +2,7 @@
 // one now, and a chat with goose. Every route but /healthz requires a valid
 // Cloudflare Access token (unless AUTH_MODE=none, for a laptop).
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
@@ -11,7 +11,7 @@ import { renderMarkdown } from './markdown.mjs';
 import { jobMeta } from '../run/meta.mjs';
 import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
-import { listRuns, readRun, readRunFile, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
+import { listRuns, readRun, readRunFile, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
 import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
@@ -65,7 +65,20 @@ function recipeMeta(recipesDir, name) {
  * chat sessions), timeZone (for showing times), log, now.
  */
 export function createApp(deps) {
-  const { k8s, dataDir, recipesDir, verify, proxy, allowedOrigin, version, chatCwd = '/data/workspace', timeZone: displayZone = 'UTC', gateways = null, log = console.log, now = () => new Date() } = deps;
+  const { k8s, dataDir, recipesDir, verify, proxy, allowedOrigin, version, chatCwd = '/data/workspace', timeZone: displayZone = 'UTC', gateways = null, stateDir = null, log = console.log, now = () => new Date() } = deps;
+
+  // The owner's favourite chores, on the web pod's own volume so a phone and a
+  // laptop see the same stars. Without a state directory there are none.
+  const favouritesFile = stateDir ? join(stateDir, 'favorites.json') : null;
+  function favourites() {
+    if (!favouritesFile) return new Set();
+    try {
+      const names = JSON.parse(readFileSync(favouritesFile, 'utf8'));
+      return new Set(Array.isArray(names) ? names.filter(n => typeof n === 'string' && RECIPE_NAME.test(n)) : []);
+    } catch {
+      return new Set();
+    }
+  }
   const NONE = { items: [], unreachable: [] };
 
   /** Resolves with the user's email, or null when the request may not pass. */
@@ -83,6 +96,7 @@ export function createApp(deps) {
   /** One dashboard row per recipe CronJob, joined with its runs and Jobs. */
   async function collect() {
     const [crons, jobs] = await Promise.all([k8s.listCronJobs(), k8s.listJobs()]);
+    const starred = favourites();
     return crons.map(cron => {
       const name = cron.metadata.labels?.[LABEL_RECIPE] ?? cron.metadata.name;
       const timeZone = cron.spec.timeZone ?? 'UTC';
@@ -104,6 +118,7 @@ export function createApp(deps) {
         nextRun: suspended ? null : next,
         running,
         lastRun: runs[0] ?? null,
+        favorite: starred.has(name),
         week: weekCells(cron, runs, timeZone),
       };
     }).sort((a, b) => a.title.localeCompare(b.title));
@@ -204,6 +219,18 @@ export function createApp(deps) {
     if (req.method === 'GET' && path === '/approvals') {
       const all = gateways?.configured ? await gateways.all() : NONE;
       return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone), 'app.js', 'approvals');
+    }
+    const star = path.match(/^\/api\/favorites\/([^/]+)\/(on|off)$/);
+    if (req.method === 'POST' && star) {
+      if (!sameOrigin(req)) return crossSite(res);
+      if (!RECIPE_NAME.test(star[1])) return send(res, 404, 'application/json', JSON.stringify({ error: 'no such chore' }));
+      if (!favouritesFile) return send(res, 503, 'application/json', JSON.stringify({ error: 'no place to keep favourites (STATE_DIR)' }));
+      const names = favourites();
+      if (star[2] === 'on') names.add(star[1]);
+      else names.delete(star[1]);
+      mkdirSync(stateDir, { recursive: true });
+      writeJsonAtomic(favouritesFile, [...names].sort().slice(0, 500));
+      return send(res, 200, 'application/json', JSON.stringify({ favorite: star[2] === 'on' }));
     }
     const decision = path.match(/^\/api\/approvals\/([a-z0-9-]+)\/([^/]+)\/(approve|reject)$/);
     if (req.method === 'POST' && decision && APPROVAL_ID.test(decision[2])) {

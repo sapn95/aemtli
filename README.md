@@ -192,6 +192,7 @@ extensions:
 | `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token |
 | `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | where held calls are pushed; without `NTFY_URL`, no pushes |
 | `NOTIFY_STATE_FILE` | `$DATA_DIR/notified.json` | which held calls were pushed already |
+| `STATE_DIR` | | where the UI keeps the favourite chores; without it there are none |
 
 `aemtli mcp-gateway`: `MCP_COMMAND` (the server's argv as JSON),
 `POLICY_FILE`, `ADMIN_TOKEN_FILE` (at least 16 characters), `STATE_DIR`

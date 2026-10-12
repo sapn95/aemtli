@@ -42,3 +42,78 @@ for (const button of document.querySelectorAll('button.approve, button.reject'))
     }
   });
 }
+
+// Search and favourites on the overview. The search only hides rows; the
+// stars are kept on the server, so every device shows the same ones.
+const find = document.getElementById('find');
+const onlyFav = document.getElementById('only-fav');
+const none = document.getElementById('none');
+const rows = [...document.querySelectorAll('li.chore')];
+
+/** Shows the rows that match the search and, if asked, are favourites. */
+function filter() {
+  const words = (find?.value ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  const favsOnly = onlyFav?.getAttribute('aria-pressed') === 'true';
+  let shown = 0;
+  for (const row of rows) {
+    const text = row.dataset.search ?? '';
+    const show = words.every(w => text.includes(w)) && (!favsOnly || row.dataset.fav === '1');
+    row.hidden = !show;
+    if (show) shown += 1;
+  }
+  if (none) none.hidden = shown > 0 || !rows.length;
+}
+
+/** The favourites filter is remembered on this device, the search is not. */
+function remember(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* a private window: fine */ }
+}
+function recall(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+if (find) {
+  find.addEventListener('input', filter);
+  find.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { find.value = ''; filter(); }
+  });
+  // "/" goes to the search box, as on most sites, unless one is typing already.
+  document.addEventListener('keydown', event => {
+    if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+      event.preventDefault();
+      find.focus();
+    }
+  });
+}
+if (onlyFav) {
+  if (recall('aemtli.onlyFav') === 'true') onlyFav.setAttribute('aria-pressed', 'true');
+  onlyFav.addEventListener('click', () => {
+    const on = onlyFav.getAttribute('aria-pressed') !== 'true';
+    onlyFav.setAttribute('aria-pressed', String(on));
+    remember('aemtli.onlyFav', String(on));
+    filter();
+  });
+}
+filter();
+
+for (const star of document.querySelectorAll('button.fav')) {
+  star.addEventListener('click', async () => {
+    const on = star.getAttribute('aria-pressed') !== 'true';
+    star.disabled = true;
+    try {
+      const res = await fetch(`/api/favorites/${encodeURIComponent(star.dataset.recipe)}/${on ? 'on' : 'off'}`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? res.status);
+      star.setAttribute('aria-pressed', String(on));
+      star.textContent = on ? '★' : '☆';
+      star.title = on ? 'A favourite' : 'Make it a favourite';
+      const row = star.closest('li.chore');
+      if (on) row.dataset.fav = '1';
+      else delete row.dataset.fav;
+      filter();
+    } catch (err) {
+      if (notice) notice.textContent = `The star did not stick: ${err.message}`;
+    } finally {
+      star.disabled = false;
+    }
+  });
+}

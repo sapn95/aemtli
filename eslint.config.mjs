@@ -28,7 +28,7 @@ export default [
     files: ['public/**/*.js'],
     languageOptions: {
       sourceType: 'module',
-      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', fetch: 'readonly', console: 'readonly' },
+      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', fetch: 'readonly', console: 'readonly', localStorage: 'readonly' },
     },
   },
   {
