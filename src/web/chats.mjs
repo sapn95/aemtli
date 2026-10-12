@@ -73,12 +73,16 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     }
   }
 
-  /** The question as the page sees it: what goose wants to run and the options. */
-  const shown = q => (q ? { title: q.title, options: q.options } : null);
+  /**
+   * The question as the page sees it: what goose wants to run, the options,
+   * and which event it is, so the buttons go under that one and not under a
+   * question still waiting in line.
+   */
+  const shown = (c, q) => (q ? { title: q.title, options: q.options, index: c.events.indexOf(q.event) } : null);
 
   function setStatus(c, status) {
     c.status = status;
-    emit(c, { kind: 'status', status, question: shown(c.question) });
+    emit(c, { kind: 'status', status, question: shown(c, c.question) });
   }
 
   /** One session/update from goose, into the conversation it belongs to. */
@@ -257,7 +261,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     return c.loading;
   }
 
-  const snapshot = c => ({ kind: 'snapshot', events: c.events, status: c.status, question: shown(c.question), mode: c.mode, title: c.title });
+  const snapshot = c => ({ kind: 'snapshot', events: c.events, status: c.status, question: shown(c, c.question), mode: c.mode, title: c.title });
 
   /** Loads a conversation for a caller: 404 when goose has none, or it was deleted meanwhile. */
   async function prepared(id) {

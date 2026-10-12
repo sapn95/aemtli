@@ -103,7 +103,7 @@ function render(e, index) {
 function renderQuestion(question) {
   log.querySelector('.choices')?.remove();
   if (!question) return;
-  const box = log.querySelector('.msg.permission:last-of-type') ?? log.lastElementChild;
+  const box = log.querySelector(`[data-index="${Number(question.index)}"]`) ?? log.lastElementChild;
   if (!box) return;
   const row = document.createElement('div');
   row.className = 'choices';
