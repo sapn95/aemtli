@@ -67,7 +67,7 @@ function zxing() {
 // tryHarder: without it the iCalendar code on a real Zivilschutz call-up was
 // missed. A turned page is tried too; light codes on dark ground are not
 // printed on letters.
-const QR_OPTIONS = { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: false, maxNumberOfSymbols: 8 };
+const QR_OPTIONS = { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: false, maxNumberOfSymbols: 0 };
 
 /** Runs a program on its arguments; resolves with its stdout and exit code, or rejects with its first line of error. */
 const run = (cmd, args, { okCodes = [0], timeout = 60_000 } = {}) => new Promise((resolve, reject) => {
