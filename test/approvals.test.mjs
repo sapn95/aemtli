@@ -177,7 +177,7 @@ test('the UI shows held calls with their arguments escaped, and decides them sam
       assert.equal((await decide('reject', { origin: ORIGIN })).status, 409);
 
       const chat = await (await fetch(`${base}/chat`)).text();
-      assert.match(chat, /data-mcp="\[\]"/, 'no MCP URL configured, nothing for the chat');
+      assert.match(chat, /The chat is off/, 'no goose serve here');
 
       const history = await (await fetch(`${base}/approvals`)).text();
       assert.match(history, /<span class="status succeeded">Done<\/span>/);
@@ -196,7 +196,10 @@ test('without gateways the UI says how to add one, and refuses decisions', async
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     assert.match(await (await fetch(`${base}/approvals`)).text(), /No gateways yet/);
-    assert.equal((await fetch(`${base}/api/approvals/x/20261011T120000Z-0000000000000000/approve`, { method: 'POST' })).status, 404);
+    const decide = `${base}/api/approvals/x/20261011T120000Z-0000000000000000/approve`;
+    assert.equal((await fetch(decide, { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } })).status, 404);
+    // No PUBLIC_ORIGIN and no Sec-Fetch-Site: nothing shows the post comes from this page.
+    assert.equal((await fetch(decide, { method: 'POST' })).status, 403);
   } finally {
     server.close();
   }

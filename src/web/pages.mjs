@@ -303,27 +303,40 @@ ${run.error ? `<div class="error" role="alert"><h2>What went wrong</h2><p>${esc(
 </article>`;
 }
 
-/** The chat page; public/chat.js does the talking. `cwd` is goose's working directory. */
-export function chatPage(cwd, mcpServers = []) {
+/**
+ * The chat page; public/chat.js does the talking, through the web server,
+ * which holds the conversation with goose. On the left the conversations
+ * goose keeps, on the right the one that is open.
+ */
+export function chatPage(on = true) {
+  if (!on) {
+    return `<section class="empty"><h1>The chat is off</h1>
+<p>It needs <code>goose serve</code> and its secret in <code>GOOSE_SERVER__SECRET_KEY</code>.</p></section>`;
+  }
   return `<section class="chat-page">
-<div class="chat-bar">
-  <h1>Chat with goose</h1>
-  <label>Ask before tools
-    <select id="mode">
-      <option value="smart_approve" selected>when they change things</option>
-      <option value="approve">always</option>
-      <option value="auto">never</option>
-      <option value="chat">no tools at all</option>
-    </select>
-  </label>
-  <button id="new" class="quiet-button">New conversation</button>
+<aside class="chat-side" aria-label="Conversations">
+  <button type="button" id="new" class="quiet-button">New conversation</button>
+  <ul id="chats" class="chats-list"></ul>
+</aside>
+<div class="chat-main">
+  <div class="chat-bar">
+    <h1 id="chat-title">Chat with goose</h1>
+    <label>Ask before tools
+      <select id="mode" disabled>
+        <option value="smart_approve" selected>when they change things</option>
+        <option value="approve">always</option>
+        <option value="auto">never</option>
+        <option value="chat">no tools at all</option>
+      </select>
+    </label>
+  </div>
+  <p id="state" class="state" role="status">Pick a conversation or start one.</p>
+  <div id="log" class="chat" aria-live="polite"></div>
+  <form id="form" class="composer">
+    <label class="visually-hidden" for="input">Message</label>
+    <textarea id="input" rows="3" placeholder="Ask goose something. Cmd+Enter sends. It keeps working when you close the page." required></textarea>
+    <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
+  </form>
 </div>
-<p id="state" class="state" role="status">Connecting…</p>
-<div id="log" class="chat" aria-live="polite" data-cwd="${esc(cwd)}" data-mcp="${esc(JSON.stringify(mcpServers))}"></div>
-<form id="form" class="composer">
-  <label class="visually-hidden" for="input">Message</label>
-  <textarea id="input" rows="3" placeholder="Ask goose something. Cmd+Enter sends." required></textarea>
-  <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
-</form>
 </section>`;
 }
