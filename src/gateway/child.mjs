@@ -3,7 +3,15 @@
 // session and one per approved call, so sessions never share state.
 import { spawn } from 'node:child_process';
 
-const MAX_LINE = 4 * 1024 * 1024;
+// The longest line a server may answer with. It is a guard against a server
+// that never stops talking, not a size for the answers themselves: a letter's
+// PDF comes back as base64 (epost_letter_pdf hands back up to 10 MB, which is
+// 13.4 MB encoded), and at 4 MB the gateway killed the server in the middle of
+// a backup run, which the job then read as "the MCP server exited (0)". The
+// line is held in memory once here and once in the server, so the gateway's
+// own memory limit is what this has to fit under.
+const MAX_LINE = 24 * 1024 * 1024;
+const MB = Math.round(MAX_LINE / 1024 / 1024);
 
 /**
  * Starts `command` (an argv array) with `env`. Returns `request`, which
@@ -51,7 +59,7 @@ export function spawnChild(command, { env = process.env, timeoutMs = 120_000, lo
   child.stdout.on('data', chunk => {
     buffer += chunk;
     if (buffer.length > MAX_LINE) {
-      log('MCP server sent a line over 4 MB; stopping it');
+      log(`MCP server sent a line over ${MB} MB; stopping it`);
       child.kill();
       return;
     }

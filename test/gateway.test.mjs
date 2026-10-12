@@ -278,3 +278,15 @@ test('a gateway will not start half configured', async () => {
   await assert.rejects(startGateway({ ...base, ADMIN_TOKEN_FILE: '' }), /ADMIN_TOKEN_FILE/);
   await assert.rejects(startGateway(base), /at least 16 characters/);
 });
+
+test('a big answer comes through whole, and one past the limit stops the server', () =>
+  withGateway(async ({ rpc, open, lines }) => {
+    const sid = await open();
+    // A scan of a few megabytes, as base64: these are the answers the backup
+    // job reads, and at 4 MB the gateway used to kill the server over them.
+    const big = (await rpc('tools/call', { name: 'read_thing', arguments: { bytes: 8 * 1024 * 1024 } }, sid)).body.result.content[0].text;
+    assert.equal(big.length, 8 * 1024 * 1024);
+    const huge = await rpc('tools/call', { name: 'read_thing', arguments: { bytes: 25 * 1024 * 1024 } }, sid);
+    assert.match(huge.body.error?.message ?? huge.body.result?.content?.[0]?.text ?? '', /exited|did not start/);
+    assert.ok(lines.some(l => /sent a line over 24 MB/.test(l)), lines.join(' | '));
+  }));
