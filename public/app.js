@@ -24,16 +24,24 @@ for (const button of document.querySelectorAll('button.approve, button.reject'))
     const card = button.closest('li');
     const outcome = card.querySelector('.outcome');
     const verb = button.classList.contains('approve') ? 'approve' : 'reject';
+    const say = card.querySelector('.say-text')?.value.trim() ?? '';
+    const chat = card.querySelector('.say-chat')?.value ?? '';
     for (const b of card.querySelectorAll('.decide button')) b.disabled = true;
     outcome.textContent = verb === 'approve' ? 'Running…' : 'Rejecting…';
     try {
-      const res = await fetch(`/api/approvals/${encodeURIComponent(button.dataset.gateway)}/${encodeURIComponent(button.dataset.id)}/${verb}`, { method: 'POST' });
+      const res = await fetch(`/api/approvals/${encodeURIComponent(button.dataset.gateway)}/${encodeURIComponent(button.dataset.id)}/${verb}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(say ? { say, chat } : {}),
+      });
       const body = await res.json().catch(() => ({}));
       if (res.status === 409) outcome.textContent = 'Someone already decided this one. Reload to see how.';
       else if (res.status === 502) outcome.textContent = 'No answer yet. It may still be running: look on the Approvals page in a minute before trying again.';
       else if (!res.ok) outcome.textContent = `That did not work: ${body.error ?? res.status}`;
       else if (body.status === 'rejected') outcome.textContent = 'Rejected. Nothing ran.';
       else outcome.textContent = `${body.status === 'done' ? 'Done' : 'Failed'}: ${String(body.result ?? '').slice(0, 400)}`;
+      if (say && body.said) outcome.textContent += ' goose was told.';
+      else if (say && body.sayError) outcome.textContent += ` goose was not told: ${body.sayError}`;
       card.classList.add('decided');
     } catch {
       // The connection dropped; the call may have run anyway. Not offering the
@@ -41,6 +49,22 @@ for (const button of document.querySelectorAll('button.approve, button.reject'))
       outcome.textContent = 'No answer. It may have run: look on the Approvals page before trying again.';
     }
   });
+}
+
+// The conversations a word to goose can go to, named in every note box on
+// the page. Without the chat there are no boxes and nothing to fill.
+const sayWheres = document.querySelectorAll('.say-chat');
+if (sayWheres.length) {
+  fetch('/api/chats').then(r => (r.ok ? r.json() : { chats: [] })).then(({ chats = [] }) => {
+    for (const where of sayWheres) {
+      for (const c of chats.slice(0, 20)) {
+        const option = document.createElement('option');
+        option.value = c.id;
+        option.textContent = c.title || 'Untitled';
+        where.append(option);
+      }
+    }
+  }).catch(() => {});
 }
 
 // Search and favourites on the overview. The search only hides rows; the

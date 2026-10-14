@@ -157,6 +157,10 @@ behind its own `aemtli mcp-gateway`:
   expires it.
 - With `NTFY_URL` set, the UI sends one push per held call: the gateway's
   name and the tool, never the arguments.
+- A decision can carry a word to goose: the box beside Approve and Reject
+  goes into a conversation once the call is decided, so a call rejected for
+  the wrong date is corrected in the same breath. The decision stands even
+  when the message does not go through, and the answer says which it was.
 
 ```yaml
 # a gateway's policy

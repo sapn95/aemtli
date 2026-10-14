@@ -223,12 +223,24 @@ function unreachableNote(unreachable) {
 }
 
 /** Calls the gateways hold for the owner, each with Approve and Reject. */
-export function needsYou({ items, unreachable }, timeZone) {
+/**
+ * The box for a word to goose beside a decision: what he types goes into a
+ * conversation once the call is decided, so a wrong call can be corrected in
+ * the same breath. Empty when the chat is off, and the conversations are
+ * filled in by the page itself (app.js), which knows what is open.
+ */
+const sayBox = (chat, gateway, id) => (chat ? `<div class="say">
+  <label><span class="visually-hidden">Tell goose</span><input type="text" class="say-text" maxlength="500" placeholder="Tell goose what to do instead (optional)" data-gateway="${esc(gateway)}" data-id="${esc(id)}"></label>
+  <label class="say-where">in <select class="say-chat" aria-label="Conversation"><option value="">the newest conversation</option></select></label>
+</div>` : '');
+
+export function needsYou({ items, unreachable }, timeZone, chat = false) {
   if (!items.length && !unreachable.length) return '';
   const cards = items.map(r => `<li class="request">
   <p class="ask"><span class="gw">${esc(r.gatewayTitle)}</span> wants to <strong>${esc(toolWords(r.tool, r.gateway))}</strong> <code class="tool">${visible(r.tool)}</code></p>
   ${argList(r.arguments)}
   <p class="asked">Asked ${esc(when(r.requestedAt, timeZone))}</p>
+  ${sayBox(chat, r.gateway, r.id)}
   <div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div>
   <p class="outcome" role="status"></p>
 </li>`).join('\n');
@@ -239,7 +251,7 @@ ${unreachableNote(unreachable)}
 }
 
 /** Every held call the gateways remember, decided or not. */
-export function approvalsPage({ items, unreachable }, configured, timeZone) {
+export function approvalsPage({ items, unreachable }, configured, timeZone, chat = false) {
   if (!configured) {
     return `<section class="empty"><h1>No gateways yet</h1>
 <p>A gateway serves one MCP server to the agents and holds the calls that need your approval. Set <code>GATEWAYS</code> to list them, as the README describes.</p></section>`;
@@ -248,7 +260,7 @@ export function approvalsPage({ items, unreachable }, configured, timeZone) {
   <p class="ask"><span class="gw">${esc(r.gatewayTitle)}</span> <strong>${esc(toolWords(r.tool, r.gateway))}</strong> <code class="tool">${visible(r.tool)}</code> <span class="status ${esc(REQUEST_CLASS[r.status] ?? 'none')}">${esc(REQUEST_WORDS[r.status] ?? r.status)}</span></p>
   <p class="asked">Asked ${esc(when(r.requestedAt, timeZone))}${r.decidedAt ? `, decided ${esc(when(r.decidedAt, timeZone))}` : ''}</p>
   <details><summary>What it asked for${r.result ? ' and what came back' : ''}</summary>${argList(r.arguments)}${r.result ? `<pre class="result">${esc(r.result)}</pre>` : ''}</details>
-  ${r.status === 'pending' ? `<div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div><p class="outcome" role="status"></p>` : ''}
+  ${r.status === 'pending' ? `${sayBox(chat, r.gateway, r.id)}<div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div><p class="outcome" role="status"></p>` : ''}
 </li>`).join('\n');
   return `<section class="approvals">
 <h1>Approvals</h1>
@@ -259,12 +271,12 @@ ${items.length ? `<ul class="history">\n${rows}\n</ul>` : '<p class="quiet">Noth
 }
 
 /** The dashboard. */
-export function dashboard({ items, week, timeZone, now = new Date(), needs = { items: [], unreachable: [] } }) {
+export function dashboard({ items, week, timeZone, now = new Date(), needs = { items: [], unreachable: [] }, chat = false }) {
   if (!items.length) {
-    return `${needsYou(needs, timeZone)}<section class="empty"><h1>No chores yet</h1>
+    return `${needsYou(needs, timeZone, chat)}<section class="empty"><h1>No chores yet</h1>
 <p>A chore is a goose recipe or a job, plus a CronJob that runs it. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p></section>`;
   }
-  return `${needsYou(needs, timeZone)}
+  return `${needsYou(needs, timeZone, chat)}
 ${plan(items, week, now, timeZone)}`;
 }
 

@@ -243,6 +243,20 @@ a.mark:hover { text-decoration: underline; }
   background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 0.5rem 0.65rem;
 }
 .result { margin-top: 0.6rem; }
+/* A word to goose beside the decision: a line to write on, like the search,
+   and the conversation it goes to next to it. */
+.say { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; margin-top: 0.75rem; }
+.say > label:first-child { flex: 1 1 20rem; min-width: 0; }
+.say-text {
+  width: 100%; font: inherit; font-size: 0.9375rem; color: var(--ink);
+  background: transparent; border: 0; border-bottom: 1.5px solid var(--rule); border-radius: 0;
+  padding: 0.3rem 0.1rem;
+}
+.say-text::placeholder { color: var(--pencil); }
+.say-text:focus { outline: none; border-bottom-color: var(--royal); }
+.say-where { color: var(--pencil); font-size: 0.875rem; display: flex; align-items: center; gap: 0.4rem; }
+.say-where select { font-size: 0.9375rem; padding: 0.2rem 0.4rem; max-width: 14rem; }
+
 .decide { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
 .outcome { margin: 0.5rem 0 0; min-height: 1.2rem; overflow-wrap: anywhere; }
 .request.decided { border-color: var(--rule); }
