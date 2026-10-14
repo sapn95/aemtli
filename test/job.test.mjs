@@ -430,6 +430,7 @@ test('the QR reader refuses a huge PDF, reads every page, and a run keeps at mos
   ]);
   assert.equal(run.files.length, 20);
   assert.equal(readdirSync(join(dataDir, 'runs', 'limits', run.id, 'files')).length, 20, 'the refused 21st was never written');
+  assert.match(read(dataDir, 'limits', run.id, 'run.log'), /2 pages drawn in \d+ ms/, 'drawing is given room per page, so the log has to know how many there are');
 });
 
 test('a hole in the report ends the run as degraded, and says what is missing', async () => {
