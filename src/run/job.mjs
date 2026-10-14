@@ -53,10 +53,10 @@ const QR_PIXELS = 2400;
 // What drawing is given, per page and in all. run()'s own minute is for the
 // whole PDF however long it is, and three Zivilschutz call-ups were killed at
 // 60000 ms every morning while the shorter letters in the same runs were
-// drawn inside it. How long a page really takes is not known yet, so the room
-// is per page and the ceiling keeps three such letters inside the job's
-// activeDeadlineSeconds of 1800.
-const QR_MS_PER_PAGE = 45_000;
+// drawn inside it. How long a page really takes is not known yet, so a page
+// keeps the whole minute it had and the ceiling keeps three such letters
+// inside the job's activeDeadlineSeconds of 1800.
+const QR_MS_PER_PAGE = 60_000;
 const QR_MS_MAX = 300_000;
 
 // The QR reader is ZXing compiled to WebAssembly, loaded from the package
@@ -227,12 +227,16 @@ export async function runJob({
         const total = Number(/^Pages:\s+(\d+)/m.exec(info)?.[1] ?? 0);
         if (total > pages) log(`the PDF has ${total} pages; QR codes were looked for on the first ${pages}`);
         // Drawing gets room for the pages it will draw, and the log keeps how
-        // long it took, which is the number nobody has yet.
+        // long it took, which is the number nobody has yet. It is logged even
+        // when drawing fails, because that is the run that needs it.
         const drawn = Math.max(1, Math.min(total || pages, pages));
         const drawing = Date.now();
-        await run('pdftoppm', ['-scale-to', String(QR_PIXELS), '-l', String(pages), '-png', join(work, 'in.pdf'), join(work, 'page')],
-          { timeout: Math.min(QR_MS_PER_PAGE * drawn, QR_MS_MAX) });
-        log(`${drawn} ${drawn === 1 ? 'page' : 'pages'} drawn in ${Date.now() - drawing} ms`);
+        try {
+          await run('pdftoppm', ['-scale-to', String(QR_PIXELS), '-l', String(pages), '-png', join(work, 'in.pdf'), join(work, 'page')],
+            { timeout: Math.min(QR_MS_PER_PAGE * drawn, QR_MS_MAX) });
+        } finally {
+          log(`drawing ${drawn} ${drawn === 1 ? 'page' : 'pages'} took ${Date.now() - drawing} ms`);
+        }
         const images = (await readdir(work)).filter(f => f.endsWith('.png')).sort();
         const read = zxing();
         const codes = [];
