@@ -23,6 +23,9 @@ function log(message) {
   console.log(`${new Date().toISOString()} ${message}`);
 }
 
+/** The run statuses that are not a failure of the run itself. */
+const DONE = new Set(['succeeded', 'degraded']);
+
 /** Reads a required setting or stops with a message naming it. */
 function required(name) {
   if (!env[name]) {
@@ -79,7 +82,11 @@ async function run(args) {
     process.exit(2);
   }
   log(`${record.recipe} ${record.id}: ${record.status}${record.error ? ` (${record.error.split('\n')[0]})` : ''}`);
-  process.exit(record.status === 'succeeded' ? 0 : 1);
+  // "degraded" is a run that did its work and said what it could not do: the
+  // report carries that and the status word on the page is amber. A failing
+  // pod would claim the run never happened, and with backoffLimit 0 the
+  // CronJob would stand at Failed whenever one feed was down.
+  process.exit(DONE.has(record.status) ? 0 : 1);
 }
 
 /** `aemtli web`: the UI. */
@@ -228,7 +235,11 @@ async function job(args) {
     process.exit(2);
   });
   log(`${record.recipe} ${record.id}: ${record.status}${record.error ? ` (${record.error})` : ''}, ${record.tokens.total} tokens`);
-  process.exit(record.status === 'succeeded' ? 0 : 1);
+  // "degraded" is a run that did its work and said what it could not do: the
+  // report carries that and the status word on the page is amber. A failing
+  // pod would claim the run never happened, and with backoffLimit 0 the
+  // CronJob would stand at Failed whenever one feed was down.
+  process.exit(DONE.has(record.status) ? 0 : 1);
 }
 
 /** `aemtli mcp-gateway`: one MCP server, its credentials, and the approval gate. */
