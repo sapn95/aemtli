@@ -183,6 +183,7 @@ test('the UI shows held calls with their arguments escaped, and decides them sam
 
       const chat = await (await fetch(`${base}/chat`)).text();
       assert.match(chat, /The chat is off/, 'no goose serve here');
+      assert.doesNotMatch(page, /say-text/, 'nothing to tell goose without a chat');
 
       const history = await (await fetch(`${base}/approvals`)).text();
       assert.match(history, /<span class="status succeeded">Done<\/span>/);
@@ -209,3 +210,71 @@ test('without gateways the UI says how to add one, and refuses decisions', async
     server.close();
   }
 });
+
+test('a decision can carry a word to goose, and the decision stands if that fails', () =>
+  withGateway(async ({ url, hold, dir }) => {
+    mkdirSync(join(dir, 'recipes'));
+    const k8s = { listCronJobs: async () => [], listJobs: async () => [] };
+    const gateways = createGatewayClient({ gateways: [{ name: 'fake', title: 'Fake', url, token: TOKEN }] });
+    // A chat that takes a message, and one conversation to take it.
+    const said = [];
+    const chats = {
+      list: async () => [{ id: 'newest', title: 'Newest', status: 'idle' }, { id: 'older', title: 'Older', status: 'idle' }],
+      say: async (id, text) => {
+        if (id === 'busy') throw Object.assign(new Error('goose is still answering'), { status: 409 });
+        said.push([id, text]);
+      },
+    };
+    const server = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', gateways, chats, log: () => {} }, { port: 0, host: '127.0.0.1' });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const decide = (id, verb, body) => fetch(`${base}/api/approvals/fake/${id}/${verb}`, {
+      method: 'POST',
+      headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    try {
+      // A word with the decision, into the conversation he picked.
+      const a = await hold({ to: 'a' });
+      const page = await (await fetch(`${base}/`)).text();
+      assert.match(page, /class="say-text"/, 'a box to tell goose');
+      assert.match(page, /<option value="">the newest conversation<\/option>/);
+      assert.match(await (await fetch(`${base}/approvals`)).text(), /class="say-text"/, 'and on the approvals page');
+      const first = await decide(a, 'reject', { say: 'Use the other date', chat: 'older' });
+      assert.equal(first.status, 200);
+      const body = await first.json();
+      assert.equal(body.status, 'rejected');
+      assert.equal(body.said, 'older');
+      assert.deepEqual(said, [['older', 'Use the other date']]);
+
+      // No conversation named: the newest one.
+      const b = await hold({ to: 'b' });
+      assert.equal((await (await decide(b, 'reject', { say: 'Ask me first' })).json()).said, 'newest');
+      assert.deepEqual(said.at(-1), ['newest', 'Ask me first']);
+
+      // goose busy: the rejection stands and the reason says what to do.
+      const c = await hold({ to: 'c' });
+      const busy = await (await decide(c, 'reject', { say: 'Not like that', chat: 'busy' })).json();
+      assert.equal(busy.status, 'rejected');
+      assert.equal(busy.said, false);
+      assert.match(busy.sayError, /say it in the chat in a moment/);
+
+      // An id that could name no conversation, and a chat with none at all.
+      const e = await hold({ to: 'e' });
+      const bad = await (await decide(e, 'reject', { say: 'hey', chat: '../etc/passwd' })).json();
+      assert.equal(bad.status, 'rejected');
+      assert.equal(bad.said, false);
+      assert.match(bad.sayError, /no conversation to tell/);
+
+      // An empty word is no word at all, and nothing is said.
+      const d = await hold({ to: 'd' });
+      const quiet = await (await decide(d, 'reject', { say: '   ' })).json();
+      assert.equal(quiet.said, undefined);
+      assert.equal(said.length, 2);
+
+      // A word with a call that was already decided tells nobody.
+      assert.equal((await decide(d, 'reject', { say: 'again' })).status, 409);
+      assert.equal(said.length, 2);
+    } finally {
+      server.close();
+    }
+  }));

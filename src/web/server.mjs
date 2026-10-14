@@ -346,12 +346,12 @@ export function createApp(deps) {
       const items = await collect();
       const week = { days: weekOf(now(), displayZone) };
       const needs = gateways?.configured ? await gateways.pending() : NONE;
-      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, now: now(), needs }));
+      return page(res, user, 'Chores', dashboard({ items, week, timeZone: displayZone, now: now(), needs, chat: Boolean(chats) }));
     }
     if (req.method === 'GET' && path === '/chat') return page(res, user, 'Chat', chatPage(Boolean(chats)), chats ? 'chat.js' : 'app.js', 'chat');
     if (req.method === 'GET' && path === '/approvals') {
       const all = gateways?.configured ? await gateways.all() : NONE;
-      return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone), 'app.js', 'approvals');
+      return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone, Boolean(chats)), 'app.js', 'approvals');
     }
     if (path === '/api/chats' || path.startsWith('/api/chats/')) return chatApi(req, res, path);
     const star = path.match(/^\/api\/favorites\/([^/]+)\/(on|off)$/);
@@ -371,14 +371,35 @@ export function createApp(deps) {
       if (!sameOrigin(req)) return crossSite(res);
       if (!gateways?.configured) return send(res, 404, 'application/json', JSON.stringify({ error: 'no gateways' }));
       const [, name, id, verb] = decision;
+      // A word to goose may come with the decision, so that a call rejected
+      // for the wrong date can be corrected in the same breath.
+      const note = await jsonBody(req);
       log(`${user} ${verb === 'approve' ? 'approves' : 'rejects'} ${name}/${id}`);
+      let decided;
       try {
-        const { status, body } = await gateways.decide(name, id, verb);
-        return send(res, status, 'application/json', JSON.stringify(body));
+        decided = await gateways.decide(name, id, verb);
       } catch (err) {
         log(`gateway ${name}: ${err.message}`);
         return send(res, 502, 'application/json', JSON.stringify({ error: 'the gateway did not answer' }));
       }
+      const body = { ...decided.body };
+      const say = typeof note?.say === 'string' ? note.say.trim().slice(0, 500) : '';
+      if (say && decided.status < 400) {
+        // The decision stands whatever happens to the message: it is already
+        // made, and a failed message must not read as a failed decision.
+        try {
+          if (!chats) throw new Error('the chat is off');
+          const where = typeof note.chat === 'string' && note.chat ? note.chat : (await chats.list())[0]?.id;
+          if (!where || !CHAT_ID.test(where)) throw new Error('there is no conversation to tell');
+          await chats.say(where, say);
+          body.said = where;
+          log(`${user} told ${where} why`);
+        } catch (err) {
+          body.said = false;
+          body.sayError = err.status === 409 ? 'goose is still answering; say it in the chat in a moment' : err.message;
+        }
+      }
+      return send(res, decided.status, 'application/json', JSON.stringify(body));
     }
 
     const recipe = path.match(/^\/recipes\/([^/]+)$/);
