@@ -69,11 +69,28 @@ function zxing() {
 // printed on letters.
 const QR_OPTIONS = { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: false, maxNumberOfSymbols: 0 };
 
-/** Runs a program on its arguments; resolves with its stdout and exit code, or rejects with its first line of error. */
+/**
+ * Why a child process failed, in one line. Node's own first line is "Command
+ * failed" and the command again, which is what the run was already told; the
+ * reason is on the lines after it, or in stderr, or in the signal that killed
+ * it. Three Zivilschutz letters failed on `pdftoppm` for months and the log
+ * held nothing but the command line.
+ */
+function whyChildFailed(err, stderr, timeout) {
+  const said = String(stderr ?? '').split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2).join('; ');
+  const tail = said ? `: ${said}` : '';
+  if (err.code === 'ENOENT') return 'not installed';
+  // A timeout and the kernel's own kill both arrive as a signal, and a killed
+  // process writes nothing: the signal is then the only thing that says why.
+  if (err.killed || err.signal) return `killed by ${err.signal ?? 'a signal'} at ${timeout} ms${tail}`;
+  return `exit ${err.code}${tail}`;
+}
+
+/** Runs a program on its arguments; resolves with its stdout and exit code, or rejects saying why it failed. */
 const run = (cmd, args, { okCodes = [0], timeout = 60_000 } = {}) => new Promise((resolve, reject) => {
-  execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, timeout, encoding: 'utf8' }, (err, stdout) => {
+  execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, timeout, encoding: 'utf8' }, (err, stdout, stderr) => {
     if (!err || okCodes.includes(err.code)) resolve({ stdout: stdout ?? '', code: err?.code ?? 0 });
-    else reject(new Error(`${cmd}: ${String(err.message).split('\n')[0]}`));
+    else reject(new Error(`${cmd}: ${whyChildFailed(err, stderr, timeout)}`));
   });
 });
 
@@ -132,6 +149,7 @@ export async function runJob({
     : null;
 
   const files = [];
+  const problems = [];
   const tokens = { input: 0, output: 0, total: 0 };
   const models = new Set();
   const clients = [];
@@ -139,6 +157,18 @@ export async function runJob({
     params,
     state,
     log,
+    /**
+     * Records something that went wrong without ending the run: a letter that
+     * could not be read, a feed that did not answer. The run finishes as
+     * "degraded" instead of "succeeded", because a report with a hole in it
+     * read as a clean run for months.
+     */
+    problem(message) {
+      const line = String(message);
+      problems.push(line);
+      log(`problem: ${line}`);
+      return line;
+    },
     fetch: fetchImpl,
     now,
     runLink: env.PUBLIC_ORIGIN ? `${env.PUBLIC_ORIGIN.replace(/\/$/, '')}/recipes/${name}/runs/${id}` : undefined,
@@ -249,9 +279,10 @@ export async function runJob({
     },
     /** A PDF's text as pdftotext -layout sees it: columns stay columns. */
     pdfText(bytes) {
+      const timeout = 30_000;
       return new Promise((resolve, reject) => {
-        const child = execFile('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { maxBuffer: 16 * 1024 * 1024, timeout: 30_000 },
-          (err, stdout) => (err ? reject(new Error(`pdftotext: ${err.message.split('\n')[0]}`)) : resolve(stdout)));
+        const child = execFile('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { maxBuffer: 16 * 1024 * 1024, timeout },
+          (err, stdout, stderr) => (err ? reject(new Error(`pdftotext: ${whyChildFailed(err, stderr, timeout)}`)) : resolve(stdout)));
         child.stdin.on('error', () => {});
         child.stdin.end(Buffer.from(bytes));
       });
@@ -312,6 +343,10 @@ export async function runJob({
     await Promise.allSettled(clients.map(c => c.close()));
   }
 
+  // A run that got through its work but could not do part of it is not a run
+  // that went well, and the one word the owner reads is this status.
+  if (status === 'succeeded' && problems.length) status = 'degraded';
+
   const finished = now();
   writeFileSync(join(dir, 'result.md'), markdown ? `${markdown.trimEnd()}\n` : '');
   Object.assign(record, {
@@ -322,6 +357,7 @@ export async function runJob({
     model: models.size ? [...models].join(', ') : null,
     error,
     ...(files.length ? { files } : {}),
+    ...(problems.length ? { problems } : {}),
   });
   writeJsonAtomic(join(dir, 'run.json'), record);
   pruneRuns(dataDir, name, keep);
