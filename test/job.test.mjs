@@ -323,7 +323,7 @@ test('release-watch: code reads and filters the feeds, the model only sums up wh
   const params = { repos: 'a/one, b/two, c/gone' };
 
   const first = await runJob({ name: 'release-watch', recipesDir, dataDir, params, anthropic, fetchImpl, now });
-  assert.equal(first.status, 'succeeded', first.error);
+  assert.equal(first.status, 'degraded', first.error ?? 'c/gone answered 404, so this run did not do all of its work');
   assert.deepEqual(fetched, ['https://github.com/a/one/releases.atom', 'https://github.com/b/two/releases.atom', 'https://github.com/c/gone/releases.atom']);
   assert.equal(prompts.length, 1, 'one model call for all new releases');
   const asked = prompts[0].messages[0].content;
@@ -338,7 +338,7 @@ test('release-watch: code reads and filters the feeds, the model only sums up wh
   assert.match(result, /^- \*\*a\/one v2\.0\.0\*\*/);
   assert.match(result, /\*\*Not read:\*\*\n- c\/gone: the feed answered 404/);
   const dead = await runJob({ name: 'release-watch', recipesDir, dataDir, params: { repos: 'd/dead' }, anthropic, fetchImpl: async () => { throw new Error('connect ETIMEDOUT'); }, now });
-  assert.equal(dead.status, 'succeeded', 'one feed that cannot be reached is a line in the report, not a failed run');
+  assert.equal(dead.status, 'degraded', 'one feed that cannot be reached is a line in the report and a hole in the run');
   assert.match(read(dataDir, 'release-watch', dead.id, 'result.md'), /- d\/dead: connect ETIMEDOUT/);
 
   // The same feeds again: nothing new, so no model call and no tokens.

@@ -63,6 +63,10 @@ export function parseFeed(xml) {
 }
 
 export default async function releaseWatch(ctx) {
+  // Noted for the run's status as well as for the report: a run that could
+  // not do part of its work ends as "Done with errors", not as "Done".
+  const problem = why => { ctx.problem?.(why); return why; };
+
   const repos = ctx.params.repos ? ctx.params.repos.split(',').map(r => r.trim()).filter(Boolean) : REPOS;
   const since = ctx.now().getTime() - WINDOW;
   const seen = new Set(ctx.state.seen ?? []);
@@ -76,12 +80,12 @@ export default async function releaseWatch(ctx) {
       if (!res.ok) throw new Error(`the feed answered ${res.status}`);
       entries = parseFeed(await res.text());
     } catch (err) {
-      problems.push(`${repo}: ${err.message}`);
+      problems.push(problem(`${repo}: ${err.message}`));
       continue;
     }
-    if (!entries.length) problems.push(`${repo}: the feed held no release`);
+    if (!entries.length) problems.push(problem(`${repo}: the feed held no release`));
     const undated = entries.filter(e => Number.isNaN(Date.parse(e.updated))).length;
-    if (undated) problems.push(`${repo}: ${undated} entries without a readable date`);
+    if (undated) problems.push(problem(`${repo}: ${undated} entries without a readable date`));
     for (const e of entries) {
       const key = `${repo}@${e.tag}`;
       if (!isRelease(e.tag) || !(Date.parse(e.updated) >= since) || seen.has(key)) continue;
