@@ -39,7 +39,7 @@ export function duration(ms) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-const STATUS_WORDS = { succeeded: 'Done', failed: 'Failed', cancelled: 'Stopped', running: 'Running' };
+const STATUS_WORDS = { succeeded: 'Done', degraded: 'Done with errors', failed: 'Failed', cancelled: 'Stopped', running: 'Running' };
 
 /** A run's status as a word with its colour. */
 function status(value) {
@@ -90,7 +90,7 @@ function soon(iso, now, timeZone) {
   return `${prefix} ${hm(at, timeZone)}`;
 }
 
-const MARKS = { succeeded: '✓', failed: '✗', cancelled: '✗', running: '…' };
+const MARKS = { succeeded: '✓', degraded: '!', failed: '✗', cancelled: '✗', running: '…' };
 
 /**
  * One day of one chore: the run that happened, or the slot that passed
@@ -313,6 +313,7 @@ export function runPage(run, title, resultHtml, log, timeZone) {
   <div><dt>Tokens</dt><dd>${esc((run.tokens?.total ?? 0).toLocaleString('en-GB'))}</dd></div>
 </dl>
 ${run.error ? `<div class="error" role="alert"><h2>What went wrong</h2><p>${esc(run.error)}</p></div>` : ''}
+${run.problems?.length ? `<div class="error" role="alert"><h2>What it could not do</h2><ul>${run.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
 <section class="result md">${resultHtml || '<p class="quiet">The run left no answer.</p>'}</section>
 ${run.files?.length ? `<section class="files"><h2>Files</h2><ul>${run.files.map(f => `<li><a href="/recipes/${esc(run.recipe)}/runs/${esc(run.id)}/files/${encodeURIComponent(f.name)}" download>${esc(f.name)}</a> <span class="quiet">${esc(size(f.bytes))}</span></li>`).join('')}</ul></section>` : ''}
 <details class="log"><summary>goose's log</summary><pre>${esc(log.slice(-20_000)) || 'Empty.'}</pre></details>

@@ -432,6 +432,33 @@ test('the QR reader refuses a huge PDF, reads every page, and a run keeps at mos
   assert.equal(readdirSync(join(dataDir, 'runs', 'limits', run.id, 'files')).length, 20, 'the refused 21st was never written');
 });
 
+test('a hole in the report ends the run as degraded, and says what is missing', async () => {
+  const { recipesDir, dataDir } = dirs({ holes: `export default async function (ctx) {
+  ctx.problem('25.08.2026: the QR code could not be read');
+  return 'The two letters that could be read.';
+}
+` });
+  const run = await runJob({ name: 'holes', recipesDir, dataDir, anthropic: null });
+  assert.equal(run.status, 'degraded', 'a run that could not do part of its work is not a run that went well');
+  assert.deepEqual(run.problems, ['25.08.2026: the QR code could not be read']);
+  assert.match(read(dataDir, 'holes', run.id, 'run.log'), /problem: 25\.08\.2026: the QR code could not be read/);
+  assert.equal(read(dataDir, 'holes', run.id, 'result.md').trim(), 'The two letters that could be read.', 'the report it did write is kept');
+});
+
+test('a program that fails says why, not only that it was run', async () => {
+  // poppler's wording is its own and moves between versions; what this holds
+  // to is that the exit code and what the program said both reach the job.
+  const { recipesDir, dataDir } = dirs({ broken: `export default async function (ctx) {
+  try { await ctx.qr(Buffer.from('not a PDF at all')); } catch (err) { return err.message; }
+  return 'no error';
+}
+` });
+  const run = await runJob({ name: 'broken', recipesDir, dataDir, anthropic: null });
+  const said = read(dataDir, 'broken', run.id, 'result.md').trim();
+  assert.match(said, /^pdfinfo: exit \d+: \S/, said);
+  assert.doesNotMatch(said, /Command failed/, 'Node’s own first line only repeats the command line');
+});
+
 test('the QR reader loads from the package, never from a network', () => {
   // A process in which any fetch fails: the reader must still read.
   const script = `globalThis.fetch = () => { throw new Error('a network call was made'); };

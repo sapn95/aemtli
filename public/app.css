@@ -199,6 +199,7 @@ h2 { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem; }
 .mark { font-size: 1.125rem; font-weight: 700; line-height: 1; text-decoration: none; }
 .mark.succeeded { color: var(--green); }
 .mark.failed, .mark.cancelled { color: var(--redpen); }
+.mark.degraded { color: var(--amber); }
 .mark.running { color: var(--amber); }
 a.mark:hover { text-decoration: underline; }
 .mark .count { font-size: 0.625rem; font-weight: 600; color: var(--pencil); vertical-align: super; }
@@ -267,6 +268,7 @@ a.mark:hover { text-decoration: underline; }
 .status { font-weight: 700; }
 .status.succeeded { color: var(--green); }
 .status.failed, .status.cancelled { color: var(--redpen); }
+.status.degraded { color: var(--amber); }
 .status.running { color: var(--amber); }
 .status.none { color: var(--pencil); font-weight: 400; }
 

@@ -21,7 +21,7 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*; \
     # As root with HOME pointing at goose's home, a version check would
     # leave root-owned state there that goose then cannot write to.
-    HOME=/tmp node --version; HOME=/tmp goose --version; HOME=/tmp uv --version; jq --version; pdftotext -v; \
+    HOME=/tmp node --version; HOME=/tmp goose --version; HOME=/tmp uv --version; jq --version; pdftotext -v; pdftoppm -v; pdfinfo -v; \
     rm -rf /tmp/* /tmp/.[!.]*
 
 WORKDIR /app
