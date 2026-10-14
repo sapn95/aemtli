@@ -265,6 +265,16 @@ test('a decision can carry a word to goose, and the decision stands if that fail
       assert.equal(bad.said, false);
       assert.match(bad.sayError, /no conversation to tell/);
 
+      // A body that is not JSON is refused before anything is decided.
+      const f = await hold({ to: 'f' });
+      const broken = await fetch(`${base}/api/approvals/fake/${f}/reject`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+        body: '{"say": "half',
+      });
+      assert.equal(broken.status, 400);
+      assert.equal((await (await decide(f, 'reject', {})).json()).status, 'rejected', 'still there to decide');
+
       // An empty word is no word at all, and nothing is said.
       const d = await hold({ to: 'd' });
       const quiet = await (await decide(d, 'reject', { say: '   ' })).json();

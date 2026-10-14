@@ -374,6 +374,9 @@ export function createApp(deps) {
       // A word to goose may come with the decision, so that a call rejected
       // for the wrong date can be corrected in the same breath.
       const note = await jsonBody(req);
+      // A body that could not be read may have held a word for goose, and
+      // deciding first would lose it without saying so.
+      if (note === null) return send(res, 400, 'application/json', JSON.stringify({ error: 'a JSON body of at most 64 KB, or none' }));
       log(`${user} ${verb === 'approve' ? 'approves' : 'rejects'} ${name}/${id}`);
       let decided;
       try {
@@ -389,6 +392,8 @@ export function createApp(deps) {
         // made, and a failed message must not read as a failed decision.
         try {
           if (!chats) throw new Error('the chat is off');
+          // Nothing named: the newest conversation, which is the first one
+          // the broker lists (see chats.mjs, which sorts by updatedAt).
           const where = typeof note.chat === 'string' && note.chat ? note.chat : (await chats.list())[0]?.id;
           if (!where || !CHAT_ID.test(where)) throw new Error('there is no conversation to tell');
           await chats.say(where, say);
