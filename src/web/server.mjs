@@ -13,7 +13,7 @@ import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
 import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
-import { runPrompt } from './ask.mjs';
+import { runPrompt, QUESTION_CHARS } from './ask.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const STATIC = {
@@ -433,6 +433,9 @@ export function createApp(deps) {
       const body = await jsonBody(req);
       if (body === null) return sendJson(res, 400, { error: 'a JSON body of at most 64 KB' });
       if (typeof body.text !== 'string' || !body.text.trim()) return sendJson(res, 400, { error: 'text is empty' });
+      // Refused rather than cut: a question that arrived half would be
+      // answered as if it were whole.
+      if (body.text.trim().length > QUESTION_CHARS) return sendJson(res, 400, { error: `a question of at most ${QUESTION_CHARS} characters` });
       if (body.chat !== undefined && body.chat !== null && body.chat !== '' && (typeof body.chat !== 'string' || !CHAT_ID.test(body.chat))) {
         return sendJson(res, 400, { error: 'no such conversation' });
       }

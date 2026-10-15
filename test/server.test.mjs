@@ -445,6 +445,9 @@ test('asking about a run: the run goes in front of the question, in a conversati
     assert.equal((await post(port, where, { text: 'Und die zweite?' }, { ...same, origin: 'https://evil.example' })).status, 403);
     assert.equal((await post(port, where, { text: ' ' }, same)).status, 400);
     assert.equal((await post(port, where, { text: 'x', chat: '../etc' }, same)).status, 400);
+    const long = await post(port, where, { text: 'x'.repeat(2001) }, same);
+    assert.equal(long.status, 400, 'a question too long is refused, not cut');
+    assert.match(JSON.parse(long.body).error, /at most 2000 characters/);
     assert.equal((await post(port, '/api/recipes/hello/runs/20261012T061300Z-ffff/chat', { text: 'x' }, same)).status, 404);
     const made = await post(port, where, { text: 'Und die zweite Rechnung?' }, same);
     assert.equal(made.status, 202);
