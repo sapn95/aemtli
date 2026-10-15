@@ -343,6 +343,17 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 .files .quiet { color: var(--pencil); font-size: 0.875rem; }
 .log pre { font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 0.75rem 1rem; max-height: 28rem; overflow: auto; }
 
+/* Asking goose about the run one is looking at. */
+.ask { margin: 1.75rem 0 0; max-width: 46rem; }
+.ask h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+.ask textarea {
+  width: 100%; font: inherit; color: var(--ink); background: var(--sheet);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 0.65rem 0.8rem; resize: vertical;
+}
+.ask textarea::placeholder { color: var(--pencil); }
+.ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-top: 0.6rem; }
+.ask-actions .say-where { margin-right: auto; }
+
 /* ---- chat ---------------------------------------------------------------- */
 
 /* The conversations goose keeps on the left, the open one on the right. */

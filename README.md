@@ -73,9 +73,16 @@ A conversation keeps the tool servers it was made with: goose stores them
 per session, so a gateway added afterwards shows up in new conversations,
 not in old ones.
 
+A run can be taken into the chat from its own page: "Ask goose" under the
+answer sends the question with the run in front of it, so nobody pastes a
+report to ask about it. It goes to a new conversation unless another one is
+named, and what the run wrote is quoted as data rather than as an
+instruction, because a job collects it from letters and web pages.
+
 `/api/chats` lists them and starts one; `/api/chats/<id>/events` is the
 stream; `say`, `stop`, `answer`, `mode` and `archive` change a conversation,
 and `DELETE` removes it, from this origin only.
+`/api/recipes/<name>/runs/<id>/chat` is the question about a run.
 
 ## Jobs: code first, the model where it pays
 

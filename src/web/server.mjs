@@ -13,6 +13,7 @@ import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
 import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
+import { runPrompt } from './ask.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const STATIC = {
@@ -419,7 +420,40 @@ export function createApp(deps) {
       if (!record) return send(res, 404, 'text/plain', 'no such run');
       const result = renderMarkdown(readRunFile(dataDir, run[1], run[2], 'result.md'));
       const { title } = recipeMeta(recipesDir, run[1]);
-      return page(res, user, `${title} run`, runPage(record, title, result, readRunFile(dataDir, run[1], run[2], 'run.log'), displayZone));
+      return page(res, user, `${title} run`, runPage(record, title, result, readRunFile(dataDir, run[1], run[2], 'run.log'), displayZone, Boolean(chats)));
+    }
+    // A conversation about one run: the run goes in front of the question, so
+    // goose has what it wrote without anyone pasting it.
+    const about = path.match(/^\/api\/recipes\/([^/]+)\/runs\/([^/]+)\/chat$/);
+    if (req.method === 'POST' && about && RECIPE_NAME.test(about[1]) && RUN_ID.test(about[2])) {
+      if (!sameOrigin(req)) return crossSite(res);
+      if (!chats) return sendJson(res, 404, { error: 'the chat is off: goose serve is not configured' });
+      const record = readRun(dataDir, about[1], about[2]);
+      if (!record) return sendJson(res, 404, { error: 'no such run' });
+      const body = await jsonBody(req);
+      if (body === null) return sendJson(res, 400, { error: 'a JSON body of at most 64 KB' });
+      if (typeof body.text !== 'string' || !body.text.trim()) return sendJson(res, 400, { error: 'text is empty' });
+      if (body.chat !== undefined && body.chat !== null && body.chat !== '' && (typeof body.chat !== 'string' || !CHAT_ID.test(body.chat))) {
+        return sendJson(res, 400, { error: 'no such conversation' });
+      }
+      const text = runPrompt({
+        run: record,
+        title: recipeMeta(recipesDir, about[1]).title,
+        result: readRunFile(dataDir, about[1], about[2], 'result.md'),
+        origin: allowedOrigin ?? '',
+        question: body.text,
+      });
+      try {
+        // A conversation of its own unless one was named, so a question about
+        // a run never lands in the middle of something else by accident.
+        const where = body.chat || (await chats.create()).id;
+        await chats.say(where, text);
+        log(`${user} asks about ${about[1]}/${about[2]} in ${where}`);
+        return sendJson(res, 202, { chat: where });
+      } catch (err) {
+        log(`ask about ${about[1]}/${about[2]}: ${err.message}`);
+        return sendJson(res, err.status ?? 502, { error: err.status ? err.message : 'goose did not answer' });
+      }
     }
     // A file a job kept with a run: always a download, never shown inline.
     const file = path.match(/^\/recipes\/([^/]+)\/runs\/([^/]+)\/files\/([^/]+)$/);

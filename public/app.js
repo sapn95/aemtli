@@ -51,6 +51,37 @@ for (const button of document.querySelectorAll('button.approve, button.reject'))
   });
 }
 
+// "Ask goose" under a run: the question goes to the server, which puts the
+// run in front of it, and the chat page opens on the answer as it comes.
+const ask = document.getElementById('ask');
+if (ask) {
+  const text = document.getElementById('ask-text');
+  const where = document.getElementById('ask-chat');
+  const button = document.getElementById('ask-send');
+  const outcome = document.getElementById('ask-outcome');
+  ask.addEventListener('submit', async event => {
+    event.preventDefault();
+    const question = text.value.trim();
+    if (!question) return;
+    button.disabled = true;
+    outcome.textContent = 'Asking…';
+    try {
+      const res = await fetch(`/api/recipes/${encodeURIComponent(ask.dataset.recipe)}/runs/${encodeURIComponent(ask.dataset.run)}/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: question, chat: where.value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 409 ? 'goose is still answering in that conversation. Pick another one, or wait a moment.' : body.error ?? res.status);
+      outcome.textContent = 'Asked. Opening the chat…';
+      location.href = `/chat#${encodeURIComponent(body.chat)}`;
+    } catch (err) {
+      outcome.textContent = `Not asked: ${err.message}`;
+      button.disabled = false;
+    }
+  });
+}
+
 // The conversations a word to goose can go to, named in every note box on
 // the page. Without the chat there are no boxes and nothing to fill.
 const sayWheres = document.querySelectorAll('.say-chat');

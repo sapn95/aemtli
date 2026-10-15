@@ -434,6 +434,51 @@ test('a conversation can be put away and taken back out, and deleting it forgets
   chats.close();
 });
 
+test('asking about a run: the run goes in front of the question, in a conversation of its own or one that is named', async () => {
+  const chats = createChatBroker({ connect: fakeGoose().connect, cwd: '/w' });
+  await withUi(async ({ call, port, lines }) => {
+    const page = await call(`/recipes/hello/runs/${RUN_ID}`);
+    assert.match(page.body, /<form id="ask" data-recipe="hello" data-run="20261005T061300Z-ab12">/);
+    assert.match(page.body, /<option value="">a new conversation<\/option>/);
+    const same = { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+    const where = `/api/recipes/hello/runs/${RUN_ID}/chat`;
+    assert.equal((await post(port, where, { text: 'Und die zweite?' }, { ...same, origin: 'https://evil.example' })).status, 403);
+    assert.equal((await post(port, where, { text: ' ' }, same)).status, 400);
+    assert.equal((await post(port, where, { text: 'x', chat: '../etc' }, same)).status, 400);
+    assert.equal((await post(port, '/api/recipes/hello/runs/20261012T061300Z-ffff/chat', { text: 'x' }, same)).status, 404);
+    const made = await post(port, where, { text: 'Und die zweite Rechnung?' }, same);
+    assert.equal(made.status, 202);
+    const { chat } = JSON.parse(made.body);
+    const said = chats.chats.get(chat).events.find(e => e.type === 'user').text;
+    assert.match(said, /Chore: Hello <b>world<\/b> \(hello\)/, 'the title as the recipe file has it, not escaped for a page');
+    assert.match(said, new RegExp(`Page: ${ORIGIN}/recipes/hello/runs/${RUN_ID}`));
+    assert.match(said, /## Grüessech/, 'what the run wrote');
+    assert.ok(said.endsWith('Und die zweite Rechnung?'));
+    assert.ok(lines.some(l => l.includes(`asks about hello/${RUN_ID} in ${chat}`)));
+    // A conversation that is named is used, and a second question lands in it.
+    await new Promise(r => setTimeout(r, 50));
+    const again = await post(port, where, { text: 'Noch eine Frage', chat }, same);
+    assert.equal(again.status, 202);
+    assert.deepEqual(JSON.parse(again.body), { chat });
+    assert.equal(chats.chats.get(chat).events.filter(e => e.type === 'user').length, 2);
+    assert.deepEqual((await chats.list()).map(c => c.id), [chat], 'no second conversation was made');
+    // While goose is still answering, the question is refused rather than lost.
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal((await post(port, where, { text: 'SLOW', chat }, same)).status, 202);
+    assert.equal((await post(port, where, { text: 'und noch eine', chat }, same)).status, 409);
+  }, { chats });
+  chats.close();
+});
+
+test('without the chat a run cannot be asked about, and the page offers nothing', () =>
+  withUi(async ({ call, port }) => {
+    const page = await call(`/recipes/hello/runs/${RUN_ID}`);
+    assert.doesNotMatch(page.body, /id="ask"/);
+    const res = await post(port, `/api/recipes/hello/runs/${RUN_ID}/chat`, { text: 'Hoi' }, { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' });
+    assert.equal(res.status, 404);
+    assert.match(res.body, /the chat is off/);
+  }));
+
 test('without a state directory a conversation cannot be put away', async () => {
   const goose = fakeGoose();
   const chats = createChatBroker({ connect: goose.connect, cwd: '/w' });
