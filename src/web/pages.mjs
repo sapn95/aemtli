@@ -301,7 +301,26 @@ ${runs.length ? `<ul class="runs">${rows}</ul>` : '<p class="quiet">It has not r
 /** "12 KB", "1.4 MB": a file's size as a person reads it. */
 const size = bytes => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
-export function runPage(run, title, resultHtml, log, timeZone) {
+/**
+ * The box under a run that starts a conversation about it: what the owner
+ * wants instead or on top, and which conversation it goes to. app.js fills
+ * the list of conversations and sends it; the server puts the run in front of
+ * the question.
+ */
+const askBox = (run, chat) => (chat ? `<section class="ask">
+<h2>Ask goose</h2>
+<form id="ask" data-recipe="${esc(run.recipe)}" data-run="${esc(run.id)}">
+  <label class="visually-hidden" for="ask-text">What goose should do about this run</label>
+  <textarea id="ask-text" rows="3" maxlength="2000" placeholder="Want more, or something else? Ask about this run. goose gets what it wrote with your question." required></textarea>
+  <div class="ask-actions">
+    <label class="say-where">in <select id="ask-chat" class="say-chat" aria-label="Conversation"><option value="">a new conversation</option></select></label>
+    <button type="submit" id="ask-send">Ask goose</button>
+  </div>
+</form>
+<p id="ask-outcome" class="notice" role="status"></p>
+</section>` : '');
+
+export function runPage(run, title, resultHtml, log, timeZone, chat = false) {
   return `<article class="run-page">
 <p class="crumb"><a href="/recipes/${esc(run.recipe)}">${esc(title)}</a></p>
 <h1>${esc(when(run.startedAt, timeZone))}</h1>
@@ -316,6 +335,7 @@ ${run.error ? `<div class="error" role="alert"><h2>What went wrong</h2><p>${esc(
 ${run.problems?.length ? `<div class="error" role="alert"><h2>What it could not do</h2><ul>${run.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
 <section class="result md">${resultHtml || '<p class="quiet">The run left no answer.</p>'}</section>
 ${run.files?.length ? `<section class="files"><h2>Files</h2><ul>${run.files.map(f => `<li><a href="/recipes/${esc(run.recipe)}/runs/${esc(run.id)}/files/${encodeURIComponent(f.name)}" download>${esc(f.name)}</a> <span class="quiet">${esc(size(f.bytes))}</span></li>`).join('')}</ul></section>` : ''}
+${askBox(run, chat)}
 <details class="log"><summary>goose's log</summary><pre>${esc(log.slice(-20_000)) || 'Empty.'}</pre></details>
 </article>`;
 }
