@@ -238,6 +238,37 @@ extensions:
 - Every page is server-rendered with escaping, behind a Content-Security-Policy
   that allows only this origin's scripts and styles.
 
+## Chores that improve themselves
+
+`aemtli mcp-recipes` hands the agent the chores as they stand in the GitOps
+repository, and one way to change them: a pull request.
+
+| Tool | |
+| --- | --- |
+| `recipes_list`, `recipes_read`, `recipes_open_proposals` | read |
+| `recipes_propose` | one branch, that one file, one pull request |
+
+The narrow shape is the point. goose reads letters, mail and web pages, so
+what it asks for is never trusted on its word:
+
+- Only `<RECIPES_REPO_PATH>/<name>.mjs`, with `name` of lower-case letters,
+  digits and dashes. Nothing else in the repository can be reached, and no
+  name can leave the folder.
+- One file per proposal, on a branch of its own named `goose/<name>-<when>`.
+  There is no tool that merges, closes, deletes or force-pushes.
+- The text must carry the `// title:` and `// description:` lines and a
+  default export, and it must pass `node --check`, which parses it without
+  running it. A proposal that cannot run never reaches a branch.
+- The cluster follows `main`, so nothing a proposal says runs anywhere until
+  a person merges it. That merge is the control; read the diff.
+- The token is a fine-grained one for that repository with Contents and Pull
+  requests, **and no Workflows permission**: a proposal can then never change
+  what CI runs, which is what would otherwise reach the CI secrets.
+
+Settings: `RECIPES_REPO` (`owner/name`), `RECIPES_REPO_PATH`,
+`RECIPES_REPO_BRANCH` (`main`), `RECIPES_TOKEN_FILE`, and for a different
+host `GITHUB_API`.
+
 ## The kanban board
 
 Upstream golang-kanban v2 has no API: a person posts forms and reads pages.
