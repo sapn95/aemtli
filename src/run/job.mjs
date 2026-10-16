@@ -314,7 +314,7 @@ export async function runJob({
     },
     /** Cards on the board `board` (Ämtli unless named), one per reference. */
     cards({ board } = {}) {
-      return jobCards(ctx.mcp('kanban'), { board, log });
+      return jobCards(ctx.mcp('kanban'), { board, baseUrl: env.KANBAN_PUBLIC_URL, log });
     },
     /**
      * Asks the model once and resolves with its text. `maxTokens` is the room

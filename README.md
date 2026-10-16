@@ -131,7 +131,9 @@ export default async function (ctx) {
   the owner, through the gateway named `kanban`. `ensure(ref, { title,
   description, due, subtasks, column })` adds a card once per reference,
   and `done(ref)` moves it to the board's last column. The board (`Ämtli`
-  unless named) is made on first use.
+  unless named) is made on first use. `ensure` hands back the card's `url`
+  and `url(id)` builds one, so a report can link the card; both are null
+  without `KANBAN_PUBLIC_URL`, never a guessed address.
 - `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
   new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
 
@@ -307,7 +309,8 @@ the user from a header, `KANBAN_AS` and `KANBAN_USER_HEADER`.
 `MCP_GATEWAYS` (JSON: `{"epost":"http://aemtli-mcp-epost:8080/mcp"}`),
 `ANTHROPIC_HOST` with a placeholder `ANTHROPIC_API_KEY` for the proxy, and
 for `ctx.notify` the same `NTFY_URL`, `NTFY_TOPIC` and `NTFY_TOKEN_FILE` the
-UI uses, plus `PUBLIC_ORIGIN` for the link a push carries.
+UI uses, plus `PUBLIC_ORIGIN` for the link a push carries and
+`KANBAN_PUBLIC_URL` for the one a card carries.
 
 `aemtli run`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER` (`schedule` or
 `manual`), `AEMTLI_MAX_TURNS` (goose's own default is 1000), `AEMTLI_KEEP_RUNS`

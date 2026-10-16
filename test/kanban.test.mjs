@@ -226,7 +226,7 @@ test('a job finds its card through the real search page', async () => {
   const tools = Object.fromEntries(kanbanTools(kanban).map(t => [t.name, t]));
   const client = { json: async (name, args) => JSON.parse(JSON.stringify(await tools[name].run(args))) };
   const found = await jobCards(client, { board: 'Ämtli' }).ensure('epost-A1', { title: 'Rechnung' });
-  assert.deepEqual(found, { id: 1, created: false, archived: false });
+  assert.deepEqual(found, { id: 1, created: false, archived: false, url: null });
   assert.ok(seen.some(r => r.path === `/search?q=${encodeURIComponent('[ämtli:epost-a1]')}&board=aemtli`));
   assert.equal(posts.length, 0);
 });
