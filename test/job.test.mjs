@@ -477,3 +477,26 @@ console.log(run.status, readFileSync(join(root, 'd', 'runs', 'q', run.id, 'resul
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim();
   assert.equal(out, 'succeeded offline');
 });
+
+test('a card a job keeps carries the address to look it up, from KANBAN_PUBLIC_URL', async () => {
+  const gw = mkdtempSync(join(tmpdir(), 'aemtli-jobkanban-'));
+  writeFileSync(join(gw, 'policy.yaml'), 'allow: [kanban_*]\n');
+  writeFileSync(join(gw, 'token'), 'gateway-token-for-the-tests-0123456789');
+  const { gateway, servers } = await startGateway({
+    MCP_COMMAND: JSON.stringify([process.execPath, fixture('fake-kanban-mcp.mjs')]), POLICY_FILE: join(gw, 'policy.yaml'),
+    ADMIN_TOKEN_FILE: join(gw, 'token'), STATE_DIR: join(gw, 'state'), PORT: '0', ADMIN_PORT: '0', HOST: '127.0.0.1', PATH: process.env.PATH,
+  }, { log: () => {} });
+  try {
+    const { recipesDir, dataDir } = dirs({ card: 'export default async ctx => JSON.stringify(await ctx.cards().ensure("epost-1", { title: "Rechnung" }));\n' });
+    const gateways = { kanban: `http://127.0.0.1:${servers[0].address().port}/mcp` };
+    const withUrl = await runJob({ name: 'card', recipesDir, dataDir, gateways, anthropic: null, env: { KANBAN_PUBLIC_URL: 'https://kanban.example' } });
+    assert.equal(withUrl.status, 'succeeded', withUrl.error);
+    assert.deepEqual(JSON.parse(read(dataDir, 'card', withUrl.id, 'result.md')), { id: 1, created: true, archived: false, url: 'https://kanban.example/b/aemtli#card-1' });
+    // Without the setting the card is still kept, and says it has no address.
+    const without = await runJob({ name: 'card', recipesDir, dataDir, gateways, anthropic: null, env: {} });
+    assert.equal(JSON.parse(read(dataDir, 'card', without.id, 'result.md')).url, null);
+  } finally {
+    await gateway.close();
+    for (const s of servers) s.close();
+  }
+});

@@ -10,8 +10,13 @@
 /** The reference as it is written into a card: lower case, no spaces. */
 export const mark = ref => `[ämtli:${String(ref).trim().toLowerCase().replace(/\s+/g, '-')}]`;
 
-/** `client` is ctx.mcp('kanban'). `board` is created when it is not there yet. */
-export function jobCards(client, { board = 'Ämtli', log = () => {} } = {}) {
+/**
+ * `client` is ctx.mcp('kanban'). `board` is created when it is not there
+ * yet. `baseUrl` is the board's public address (KANBAN_PUBLIC_URL), so a
+ * report can link a card; without it a card has no address and says so with
+ * null rather than with a guess.
+ */
+export function jobCards(client, { board = 'Ämtli', baseUrl = '', log = () => {} } = {}) {
   let ready = null;
 
   /** The board, made on first use; its slug from then on. */
@@ -31,16 +36,27 @@ export function jobCards(client, { board = 'Ämtli', log = () => {} } = {}) {
    */
   const find = async ref => (await client.json('kanban_search', { query: mark(ref), board: await slug() })).hits;
 
+  /**
+   * Where a card is to be found, for a person: the board page with the card
+   * as its anchor. Null without a public address, and for a card in the
+   * archive, which has no anchor of its own.
+   */
+  async function url(id) {
+    if (!baseUrl || !id) return null;
+    return `${String(baseUrl).replace(/\/+$/, '')}/b/${encodeURIComponent(await slug())}#card-${id}`;
+  }
+
   return {
     mark,
+    url,
 
     /**
      * Adds a card unless one with this reference is on the board or in its
-     * archive. Resolves with { id, created, archived }.
+     * archive. Resolves with { id, created, archived, url }.
      */
     async ensure(ref, { title, description = '', due, subtasks, column }) {
       const [there] = await find(ref);
-      if (there) return { id: there.id, created: false, archived: there.archived };
+      if (there) return { id: there.id, created: false, archived: there.archived, url: await url(there.id) };
       const card = await client.json('kanban_create_card', {
         board: await slug(),
         title,
@@ -50,7 +66,7 @@ export function jobCards(client, { board = 'Ämtli', log = () => {} } = {}) {
         ...(column ? { column } : {}),
       });
       log(`kanban: card ${card.id} for ${ref}`);
-      return { id: card.id, created: true, archived: false };
+      return { id: card.id, created: true, archived: false, url: await url(card.id) };
     },
 
     /**
