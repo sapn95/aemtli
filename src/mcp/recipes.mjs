@@ -168,19 +168,27 @@ export function createRecipes({ repo, path, base = 'main', token, api = 'https:/
       const head = `${branchPrefix}/${name.replace(BRANCH_SAFE, '-')}-${stamp()}`;
       const { object } = await call('GET', `/repos/${repo}/git/ref/heads/${encodeURIComponent(base)}`);
       await call('POST', `/repos/${repo}/git/refs`, { ref: `refs/heads/${head}`, sha: object.sha });
-      await call('PUT', `/repos/${repo}/contents/${encodePath(fileOf(name))}`, {
-        message: `${current ? 'Change' : 'Add'} the ${name} recipe\n\n${reason}`,
-        content: Buffer.from(String(source)).toString('base64'),
-        branch: head,
-        ...(current ? { sha: current.sha } : {}),
-      });
-      const pull = await call('POST', `/repos/${repo}/pulls`, {
-        title: `${current ? 'Change' : 'Add'} the ${name} recipe`,
-        head,
-        base,
-        body: `${reason}\n\nProposed by goose through ämtli. Nothing of this runs until someone merges it: the cluster follows \`${base}\`.`,
-      });
-      return { name, branch: head, number: pull.number, url: pull.html_url, changed: Boolean(current) };
+      try {
+        await call('PUT', `/repos/${repo}/contents/${encodePath(fileOf(name))}`, {
+          message: `${current ? 'Change' : 'Add'} the ${name} recipe\n\n${reason}`,
+          content: Buffer.from(String(source)).toString('base64'),
+          branch: head,
+          ...(current ? { sha: current.sha } : {}),
+        });
+        const pull = await call('POST', `/repos/${repo}/pulls`, {
+          title: `${current ? 'Change' : 'Add'} the ${name} recipe`,
+          head,
+          base,
+          body: `${reason}\n\nProposed by goose through ämtli. Nothing of this runs until someone merges it: the cluster follows \`${base}\`.`,
+        });
+        return { name, branch: head, number: pull.number, url: pull.html_url, changed: Boolean(current) };
+      } catch (err) {
+        // A branch without a pull request is a branch nobody will look at.
+        // Taking it back is best effort: the proposal failed either way, and
+        // the reason to tell is the one that failed.
+        await call('DELETE', `/repos/${repo}/git/refs/heads/${encodeURIComponent(head)}`).catch(() => {});
+        throw err;
+      }
     },
 
     /** The proposals that are still open, so nothing is proposed twice. */

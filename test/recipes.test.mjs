@@ -145,6 +145,15 @@ test('what is refused before a branch is made: the name, the file, the reason, a
   assert.deepEqual([...gh.branches.keys()], ['main']);
 });
 
+test('a branch without a pull request is taken back, and the reason that failed is the one told', async () => {
+  const gh = fakeGitHub({ fail: { '/repos/o/r/pulls': { status: 422, message: 'No commits between main and goose/termine' } } });
+  await assert.rejects(
+    gh.recipes.propose({ name: 'termine', source: GOOD.replace('nichts', 'etwas'), why: 'besser' }),
+    err => err.status === 422 && /No commits between/.test(err.message),
+  );
+  assert.ok(gh.seen.some(s => s.method === 'DELETE' && s.path === '/repos/o/r/git/refs/heads/goose%2Ftermine-20261016T090000Z'), 'the branch is taken back');
+});
+
 test('what GitHub refuses comes back in its own words, without the token', async () => {
   const gh = fakeGitHub({ fail: { '/repos/o/r/git/refs': { status: 403, message: 'Resource not accessible by personal access token' } } });
   await assert.rejects(
