@@ -24,6 +24,10 @@ const BRANCH_SAFE = /[^a-z0-9-]+/g;
 // the limit keeps one call from filling a repository.
 const MAX_BYTES = 64 * 1024;
 const MAX_WHY = 2000;
+// Open pull requests are read page by page, because a proposal that is not
+// in the list is one the agent would make a second time.
+const PER_PAGE = 100;
+const MAX_PAGES = 5;
 
 /** The first line of a piece of text, trimmed, at most `max` characters. */
 const oneLine = (s, max) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -191,12 +195,26 @@ export function createRecipes({ repo, path, base = 'main', token, api = 'https:/
       }
     },
 
-    /** The proposals that are still open, so nothing is proposed twice. */
+    /**
+     * The proposals that are still open, so nothing is proposed twice.
+     * Every open pull request has to be looked at: GitHub matches `head`
+     * exactly and cannot be asked for a prefix, and a proposal missing from
+     * this list is one the agent would make again.
+     */
     async proposals() {
-      const pulls = await call('GET', `/repos/${repo}/pulls?state=open&per_page=50`);
-      return (Array.isArray(pulls) ? pulls : [])
-        .filter(p => String(p.head?.ref ?? '').startsWith(`${branchPrefix}/`))
-        .map(p => ({ number: p.number, title: p.title, branch: p.head.ref, url: p.html_url, opened: p.created_at }));
+      const mine = [];
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const pulls = await call('GET', `/repos/${repo}/pulls?state=open&per_page=${PER_PAGE}&page=${page}`);
+        const got = Array.isArray(pulls) ? pulls : [];
+        mine.push(...got
+          .filter(p => String(p.head?.ref ?? '').startsWith(`${branchPrefix}/`))
+          .map(p => ({ number: p.number, title: p.title, branch: p.head.ref, url: p.html_url, opened: p.created_at })));
+        if (got.length < PER_PAGE) return mine;
+      }
+      // More open pull requests than this repository should ever have: the
+      // list says so rather than pretending to be the whole of it.
+      mine.push({ number: null, title: `more than ${MAX_PAGES * PER_PAGE} pull requests are open; this list may miss proposals`, branch: null, url: null, opened: null });
+      return mine;
     },
   };
 }

@@ -45,7 +45,11 @@ function fakeGitHub({ files = { 'termine.mjs': GOOD }, pulls = [], fail = {} } =
       pulls.push({ number, title: body.title, head: { ref: body.head }, html_url: `https://github.com/o/r/pull/${number}`, created_at: '2026-10-16T09:00:00Z' });
       return answer(201, pulls.at(-1));
     }
-    if (init.method === 'GET' && pathname === '/repos/o/r/pulls') return answer(200, pulls);
+    if (init.method === 'GET' && pathname === '/repos/o/r/pulls') {
+      const page = Number(new URLSearchParams(search).get('page') ?? 1);
+      const size = Number(new URLSearchParams(search).get('per_page') ?? 30);
+      return answer(200, pulls.slice((page - 1) * size, page * size));
+    }
     return answer(404, { message: `no route for ${init.method} ${pathname}` });
   };
   const recipes = createRecipes({ repo: 'o/r', path: '/c/recipes/', token: 'ghp-secret', fetchImpl, now: () => new Date('2026-10-16T09:00:00Z') });
@@ -160,6 +164,21 @@ test('what GitHub refuses comes back in its own words, without the token', async
     gh.recipes.propose({ name: 'termine', source: GOOD.replace('nichts', 'etwas'), why: 'x' }),
     err => err.status === 403 && /GitHub answered 403: Resource not accessible/.test(err.message) && !err.message.includes('ghp-secret'),
   );
+});
+
+test('every open pull request is looked at, page by page, and a repository fuller than that says so', async () => {
+  // GitHub matches head exactly, so the prefix is filtered here: a proposal
+  // on page three is one the agent would otherwise make again.
+  const many = Array.from({ length: 201 }, (_, i) => ({ number: i + 1, title: `PR ${i + 1}`, head: { ref: i === 150 ? 'goose/termine-late' : `someone/else-${i}` }, html_url: `https://github.com/o/r/pull/${i + 1}`, created_at: '2026-10-16T09:00:00Z' }));
+  const gh = fakeGitHub({ pulls: many });
+  const found = await gh.recipes.proposals();
+  assert.deepEqual(found.map(p => p.branch), ['goose/termine-late']);
+  assert.deepEqual(gh.seen.map(s => new URLSearchParams(s.path.split('?')[1]).get('page')), ['1', '2', '3'], 'until a page is not full');
+
+  const full = fakeGitHub({ pulls: Array.from({ length: 600 }, (_, i) => ({ number: i, title: 't', head: { ref: 'other/x' }, html_url: 'u', created_at: 'c' })) });
+  const capped = await full.recipes.proposals();
+  assert.match(capped.at(-1).title, /more than 500 pull requests are open; this list may miss proposals/);
+  assert.equal(full.seen.length, 5, 'and it stops there rather than reading for ever');
 });
 
 test('the tools: what they are called, what they take, and that none of them merges', async () => {
