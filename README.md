@@ -66,6 +66,17 @@ dropped connection. goose's answers arrive as HTML that the server draws from
 their Markdown with the same rules as a run's result: no raw HTML, no script
 links, no images loaded.
 
+A message can carry images: up to six, added with the Image button, pasted,
+or dropped on the box. The page draws each one as a JPEG of at most 1568
+pixels on its longer side, the size the model works at, and the drawing
+leaves the photo's metadata (location, camera) behind. The server checks
+each image's first bytes against its type and hands it to goose as an image
+block, which goose passes on to the model. Images that come back when goose
+replays a conversation are shown with the message they belong to. The server
+keeps up to 64 MB of them in memory and serves them by id under
+`/api/chats/<id>/images/<image>`; one it let go returns when the
+conversation is opened again.
+
 A conversation can be put away or deleted from the chat's own header. Archived ones are
 hidden until the page asks for them; where they are kept is ämtli's own
 business, because goose has no archive over ACP. Deleting one deletes it at

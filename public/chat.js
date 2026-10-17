@@ -5,6 +5,12 @@
 // another device. goose's answers come as HTML the server rendered from their
 // Markdown, with raw HTML and script links already refused there; everything
 // else is set with textContent only.
+//
+// Images go with a message as JPEGs of at most LONG_SIDE pixels, drawn here
+// on a canvas: the model works at that size anyway, a phone photo is ten
+// times larger, and the drawing reads only pixels, so nothing else in the
+// file (its location, the camera) leaves the phone. The page shows images
+// from the server by id, never from the stream.
 
 const list = document.getElementById('chats');
 const log = document.getElementById('log');
@@ -19,6 +25,9 @@ const showArchived = document.getElementById('show-archived');
 const archiveButton = document.getElementById('archive');
 const deleteButton = document.getElementById('delete');
 const heading = document.getElementById('chat-title');
+const pick = document.getElementById('pick');
+const attach = document.getElementById('attach');
+const attached = document.getElementById('attached');
 
 let current = null;
 let stream = null;
@@ -29,6 +38,10 @@ let status = 'idle';
 let turns = 0;
 // Which conversations are put away, as the last listing said.
 let away = new Set();
+// The images that go with the next message: { mimeType, data, preview }.
+let pictures = [];
+const MAX_PICTURES = 6;
+const LONG_SIDE = 1568;
 
 const STATE_WORDS = { idle: 'Ready.', running: 'goose is working. You can close the page; it keeps going.', waiting: 'goose asks before going on.' };
 const OPTION_LABELS = { allow_once: 'Allow once', allow_always: 'Always allow', reject_once: 'Reject', reject_always: 'Always reject' };
@@ -101,6 +114,34 @@ async function refreshList() {
   }
 }
 
+/** The images of a message, each a link to itself at full size. */
+function shots(images) {
+  const row = document.createElement('div');
+  row.className = 'shots';
+  for (const [i, image] of images.entries()) {
+    const href = `/api/chats/${encodeURIComponent(current)}/images/${encodeURIComponent(image.id)}`;
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    const img = document.createElement('img');
+    img.src = href;
+    img.alt = `Image ${i + 1}`;
+    img.loading = 'lazy';
+    // The server keeps images in memory; one it let go comes back with the
+    // conversation when it is opened again.
+    img.addEventListener('error', () => {
+      const gone = document.createElement('span');
+      gone.className = 'gone';
+      gone.textContent = 'This image is no longer here. Open the conversation again to see it.';
+      a.replaceWith(gone);
+    }, { once: true });
+    a.append(img);
+    row.append(a);
+  }
+  return row;
+}
+
 /** One event as an element. */
 function render(e, index) {
   const el = document.createElement('div');
@@ -125,6 +166,7 @@ function render(e, index) {
     el.className = `msg ${e.type}`;
     el.textContent = e.text ?? '';
   }
+  if (e.images?.length) el.append(shots(e.images));
   return el;
 }
 
@@ -215,7 +257,8 @@ function open(id) {
       const el = log.querySelector(`[data-index="${m.index}"]`);
       // An answer already drawn from Markdown waits for its next drawing;
       // one that is not shows its text as it grows.
-      if (el && !el.classList.contains('md')) el.textContent = events[m.index].text;
+      if (el && events[m.index].images?.length) el.replaceWith(render(events[m.index], m.index));
+      else if (el && !el.classList.contains('md')) el.textContent = events[m.index].text;
       log.scrollTop = log.scrollHeight;
     } else if (m.kind === 'replace') {
       events[m.index] = m.event;
@@ -239,10 +282,86 @@ function open(id) {
   refreshList();
 }
 
+/** An image file as a JPEG of at most LONG_SIDE pixels, in base64. */
+async function shrink(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, LONG_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const g = canvas.getContext('2d');
+  // What is transparent in a PNG would turn black in a JPEG.
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  const url = canvas.toDataURL('image/jpeg', 0.85);
+  return { mimeType: 'image/jpeg', data: url.slice(url.indexOf(',') + 1), preview: url };
+}
+
+function showPictures() {
+  attached.hidden = !pictures.length;
+  attached.replaceChildren(...pictures.map((p, i) => {
+    const box = document.createElement('div');
+    box.className = 'shot';
+    const img = document.createElement('img');
+    img.src = p.preview;
+    img.alt = `Image ${i + 1}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'quiet-button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `Remove image ${i + 1}`);
+    remove.addEventListener('click', () => {
+      pictures.splice(i, 1);
+      showPictures();
+    });
+    box.append(img, remove);
+    return box;
+  }));
+}
+
+async function addPictures(files) {
+  for (const file of [...files].filter(f => f.type.startsWith('image/'))) {
+    if (pictures.length >= MAX_PICTURES) {
+      state.textContent = `At most ${MAX_PICTURES} images go with one message.`;
+      break;
+    }
+    try {
+      pictures.push(await shrink(file));
+    } catch {
+      state.textContent = `${file.name || 'This image'} cannot be read here. JPEG, PNG, GIF and WebP can.`;
+    }
+  }
+  showPictures();
+}
+
+attach.addEventListener('click', () => pick.click());
+pick.addEventListener('change', async () => {
+  await addPictures(pick.files);
+  pick.value = '';
+});
+input.addEventListener('paste', event => {
+  const files = [...(event.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'));
+  if (!files.length) return;
+  // A copied picture often comes with text that names it; that text is kept
+  // out only when there is nothing else.
+  if (!event.clipboardData.getData('text/plain')) event.preventDefault();
+  addPictures(files);
+});
+form.addEventListener('dragover', event => {
+  if ([...(event.dataTransfer?.types ?? [])].includes('Files')) event.preventDefault();
+});
+form.addEventListener('drop', event => {
+  if (!event.dataTransfer?.files?.length) return;
+  event.preventDefault();
+  addPictures(event.dataTransfer.files);
+});
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !pictures.length) return;
   send.disabled = true;
   try {
     if (!current) {
@@ -250,8 +369,11 @@ form.addEventListener('submit', async event => {
       location.hash = encodeURIComponent(id);
       open(id);
     }
-    await api(`/api/chats/${encodeURIComponent(current)}/say`, { method: 'POST', body: { text } });
+    const images = pictures.map(({ mimeType, data }) => ({ mimeType, data }));
+    await api(`/api/chats/${encodeURIComponent(current)}/say`, { method: 'POST', body: { text, images } });
     input.value = '';
+    pictures = [];
+    showPictures();
   } catch (err) {
     state.textContent = `Not sent: ${err.message}`;
     send.disabled = false;

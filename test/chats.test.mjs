@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createChatBroker } from '../src/web/chats.mjs';
-import { fakeGoose } from './fixtures/fake-goose-acp.mjs';
+import { createChatBroker, readImages } from '../src/web/chats.mjs';
+import { fakeGoose, PNG, JPEG } from './fixtures/fake-goose-acp.mjs';
 
 /** A stream the broker writes to, as a response object would be written. */
 function watcher() {
@@ -395,4 +395,105 @@ test('a stop that goose never answers does not reach the next turn', async () =>
   assert.equal(c.status, 'running', 'the old stop left this turn alone');
   assert.ok(!c.events.some(e => /did not say that it stopped/.test(e.text ?? '')));
   b.close();
+});
+
+test('images: checked by their bytes, at most six, small enough for the model', () => {
+  const png = { mimeType: 'image/png', data: PNG };
+  assert.deepEqual(readImages(undefined), []);
+  assert.deepEqual(readImages([png, { mimeType: 'image/jpeg', data: JPEG }]), [png, { mimeType: 'image/jpeg', data: JPEG }]);
+  const gif = Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1').toString('base64');
+  const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]).toString('base64');
+  assert.equal(readImages([{ mimeType: 'image/gif', data: gif }, { mimeType: 'image/webp', data: webp }]).length, 2);
+  const refused = (images, pattern) => assert.throws(() => readImages(images), err => err.status === 400 && pattern.test(err.message), String(pattern));
+  refused('x', /must be a list/);
+  refused(Array(7).fill(png), /at most 6 images/);
+  refused([{ mimeType: 'image/svg+xml', data: PNG }], /image 1: only JPEG, PNG, GIF and WebP/);
+  refused([{ mimeType: 'toString', data: PNG }], /only JPEG/);
+  refused([null], /only JPEG/);
+  refused([png, { mimeType: 'image/png', data: 'not base64!' }], /image 2: the data must be base64/);
+  refused([{ mimeType: 'image/png', data: 'abc' }], /must be base64/);
+  refused([{ mimeType: 'image/jpeg', data: PNG }], /image 1 is not the JPEG it says it is/);
+  refused([{ mimeType: 'image/png', data: PNG + 'A'.repeat(5 * 1024 * 1024) }], /larger than the model takes/);
+  const big = { mimeType: 'image/png', data: PNG + 'A'.repeat(4.5 * 1024 * 1024) };
+  refused([big, big, big], /together are larger than one message can carry/);
+});
+
+test('a message with images: the prompt carries them after the text, the page gets them by id', async () => {
+  const goose = fakeGoose();
+  const pushes = [];
+  const b = broker(goose, pushes);
+  const { id } = await b.create();
+  const w = watcher();
+  await b.watch(id, w);
+  await b.say(id, 'Was steht da?', [{ mimeType: 'image/jpeg', data: JPEG }]);
+  await settle();
+  assert.deepEqual(goose.prompts.at(-1), [{ type: 'text', text: 'Was steht da?' }, { type: 'image', mimeType: 'image/jpeg', data: JPEG }]);
+  const said = b.chats.get(id).events[0];
+  assert.equal(said.images.length, 1);
+  assert.equal(said.images[0].mimeType, 'image/jpeg');
+  assert.doesNotMatch(JSON.stringify(w.frames), new RegExp(JPEG.slice(0, 8).replace(/[+/]/g, '\\$&')), 'the stream carries ids, not the bytes');
+  const got = b.image(id, said.images[0].id);
+  assert.deepEqual(got, { mimeType: 'image/jpeg', data: Buffer.from(JPEG, 'base64') });
+  assert.equal(b.image('another', said.images[0].id), null, 'only for the conversation it belongs to');
+
+  // An image alone is a message too.
+  b.chats.get(id).watchers.clear();
+  await b.say(id, '', [{ mimeType: 'image/png', data: PNG }]);
+  await settle();
+  assert.deepEqual(goose.prompts.at(-1), [{ type: 'image', mimeType: 'image/png', data: PNG }]);
+  assert.equal(pushes.at(-1).message, 'Bild', 'a push for an image alone, before goose named the chat');
+});
+
+test('images come back with the history, and an answer can carry one', async () => {
+  const goose = fakeGoose();
+  const first = broker(goose);
+  const { id } = await first.create();
+  await first.say(id, 'Show me a PICTURE', [{ mimeType: 'image/png', data: PNG }]);
+  await settle();
+  const answer = first.chats.get(id).events.at(-1);
+  assert.equal(answer.type, 'agent');
+  assert.equal(answer.images.length, 1, 'an image in the answer is shown');
+  first.close();
+
+  const second = broker(goose);
+  const w = watcher();
+  await second.watch(id, w);
+  const [user, agent] = w.frames[0].events;
+  assert.equal(user.text, 'Show me a PICTURE');
+  assert.equal(user.images.length, 1, 'the image stays with the message it came with');
+  assert.equal(agent.images.length, 1);
+  assert.equal(second.image(id, user.images[0].id).mimeType, 'image/png');
+  // Loaded again: the old ids go, the new ones replace them.
+  const before = second.images.size;
+  second.chats.get(id).loaded = false;
+  second.chats.get(id).watchers.clear();
+  await second.open(id);
+  assert.equal(second.images.size, before);
+  assert.equal(second.image(id, user.images[0].id), null);
+  await second.remove(id);
+  assert.equal(second.images.size, 0, 'a deleted conversation keeps no images');
+});
+
+test('an image goose sends in a type the page cannot show is left out', async () => {
+  const goose = fakeGoose();
+  const b = broker(goose);
+  const { id } = await b.create();
+  goose.sessions.get(id).push({ role: 'user', text: '', blocks: [{ type: 'image', mimeType: 'image/svg+xml', data: PNG }, { type: 'text', text: 'and words' }] });
+  b.chats.get(id).loaded = false;
+  await b.open(id);
+  assert.deepEqual(b.chats.get(id).events.map(e => [e.type, e.text, e.images]), [['user', 'and words', undefined]]);
+  assert.equal(b.images.size, 0);
+});
+
+test('images past the memory they may take go oldest first', async () => {
+  const goose = fakeGoose();
+  const b = createChatBroker({ connect: goose.connect, cwd: '/w', imageMemory: 20 });
+  const { id } = await b.create();
+  await b.say(id, 'one', [{ mimeType: 'image/png', data: PNG }]);
+  await settle();
+  await b.say(id, 'two', [{ mimeType: 'image/jpeg', data: JPEG }]);
+  await settle();
+  const [one, , two] = b.chats.get(id).events;
+  assert.equal(b.image(id, one.images[0].id), null, '12 + 9 bytes is over 20');
+  assert.equal(b.image(id, two.images[0].id).mimeType, 'image/jpeg');
 });

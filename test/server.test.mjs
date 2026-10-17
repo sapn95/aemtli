@@ -8,7 +8,7 @@ import { connect } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { startServer } from '../src/web/server.mjs';
 import { createChatBroker } from '../src/web/chats.mjs';
-import { fakeGoose } from './fixtures/fake-goose-acp.mjs';
+import { fakeGoose, PNG, JPEG } from './fixtures/fake-goose-acp.mjs';
 import { createRunDir, writeJsonAtomic } from '../src/store/runs.mjs';
 
 const ORIGIN = 'https://chores.example';
@@ -266,6 +266,39 @@ test('the chat API: conversations, a stream, and changes from this origin only',
       assert.equal((await call(path, { method, headers: evil })).status, 403, `${method} ${path}`);
     }
     assert.ok(chats.chats.has(id), 'not deleted');
+  }, { chats });
+  chats.close();
+});
+
+test('the chat API takes images with a message, and serves them back by id', async () => {
+  const goose = fakeGoose();
+  const chats = createChatBroker({ connect: goose.connect, cwd: '/w' });
+  await withUi(async ({ call, port }) => {
+    const same = { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' };
+    const { id } = JSON.parse((await post(port, '/api/chats', {}, same)).body);
+    const refused = await post(port, `/api/chats/${id}/say`, { text: 'x', images: [{ mimeType: 'image/png', data: JPEG }] }, same);
+    assert.equal(refused.status, 400);
+    assert.match(JSON.parse(refused.body).error, /not the PNG it says it is/);
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: 7 }, same)).status, 400);
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: ' ', images: [] }, same)).status, 400, 'nothing to say');
+    assert.equal((await post(port, `/api/chats/${id}/say`, { text: ' ', images: [{ mimeType: 'image/png', data: PNG }] }, same)).status, 202, 'an image alone');
+    await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(goose.prompts.at(-1), [{ type: 'image', mimeType: 'image/png', data: PNG }]);
+    const ref = chats.chats.get(id).events[0].images[0];
+    const got = await call(`/api/chats/${id}/images/${ref.id}`);
+    assert.equal(got.status, 200);
+    assert.equal(got.headers['content-type'], 'image/png');
+    assert.equal(got.headers['content-security-policy'], "default-src 'none'; img-src 'self'");
+    assert.equal(got.headers['x-content-type-options'], 'nosniff');
+    assert.equal((await call(`/api/chats/${id}/images/${'0'.repeat(24)}`)).status, 404);
+    assert.equal((await call(`/api/chats/${id}/images/..%2F`)).status, 404);
+    assert.equal((await call(`/api/chats/other/images/${ref.id}`)).status, 404, 'only under its own conversation');
+    assert.equal((await call(`/api/chats/${id}/images/${ref.id}`, { token: null })).status, 403, 'behind Access like the rest');
+    // The larger limit is for a message only.
+    const huge = await post(port, `/api/chats/${id}/say`, { text: 'x', images: [{ mimeType: 'image/png', data: 'A'.repeat(13 * 1024 * 1024) }] }, same);
+    assert.match(JSON.parse(huge.body).error, /at most 12 MB/);
+    const modeTooBig = await post(port, `/api/chats/${id}/mode`, { mode: 'auto', pad: 'x'.repeat(70_000) }, same);
+    assert.match(JSON.parse(modeTooBig.body).error, /at most 64 KB/);
   }, { chats });
   chats.close();
 });

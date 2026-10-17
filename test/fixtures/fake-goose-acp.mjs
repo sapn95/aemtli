@@ -1,16 +1,24 @@
 // A goose serve in the test process, for the chat broker's tests.
 
+/** The first bytes of a PNG, which is all the checks look at. */
+export const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString('base64');
+/** The same for a JPEG. */
+export const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49]).toString('base64');
+
 /**
  * A goose serve in the test process, speaking ACP over a WebSocket-like
  * object: sessions it keeps across connections, replay on session/load, a
  * question before a tool when the prompt says TOOL (two side by side for
  * TWICE), a turn that waits when the prompt says SLOW, and a session/load
- * that never answers for a session called "hang".
+ * that never answers for a session called "hang". A prompt keeps all its
+ * blocks, images too, and is replayed block by block; one that says PICTURE
+ * is answered with an image as well.
  */
 export function fakeGoose({ loadDelayMs = 0 } = {}) {
   const sessions = new Map();
   let n = 0;
   const sockets = [];
+  const prompts = [];
   const connect = () => {
     const ws = { closed: false };
     sockets.push(ws);
@@ -21,7 +29,11 @@ export function fakeGoose({ loadDelayMs = 0 } = {}) {
       if (!turn) return;
       const t = turn;
       turn = null;
-      if (stopReason === 'end_turn') {
+      if (stopReason === 'end_turn' && t.picture) {
+        const image = { type: 'image', mimeType: 'image/png', data: PNG };
+        sessions.get(t.sid).push({ role: 'agent', text: '', blocks: [image] });
+        update(t.sid, { sessionUpdate: 'agent_message_chunk', content: image });
+      } else if (stopReason === 'end_turn') {
         sessions.get(t.sid).push({ role: 'agent', text: 'Hallo zäme' });
         update(t.sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hallo ' } });
         update(t.sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'zäme' } });
@@ -53,7 +65,9 @@ export function fakeGoose({ loadDelayMs = 0 } = {}) {
           if (!sessions.has(m.params.sessionId)) return deliver({ jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'Session not found' } });
           const replay = () => {
             for (const msg of sessions.get(m.params.sessionId) ?? []) {
-              update(m.params.sessionId, { sessionUpdate: msg.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', content: { type: 'text', text: msg.text } });
+              for (const content of msg.blocks ?? [{ type: 'text', text: msg.text }]) {
+                update(m.params.sessionId, { sessionUpdate: msg.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', content });
+              }
             }
             reply({ modes: { currentModeId: 'auto' } });
           };
@@ -62,9 +76,11 @@ export function fakeGoose({ loadDelayMs = 0 } = {}) {
         case 'session/delete': sessions.delete(m.params.sessionId); return reply({});
         case 'session/cancel': return finish('cancelled');
         case 'session/prompt': {
-          const text = m.params.prompt[0].text;
-          sessions.get(m.params.sessionId).push({ role: 'user', text });
-          turn = { id: m.id, sid: m.params.sessionId };
+          const blocks = m.params.prompt;
+          prompts.push(blocks);
+          const text = blocks.find(b => b.type === 'text')?.text ?? '';
+          sessions.get(m.params.sessionId).push({ role: 'user', text, blocks });
+          turn = { id: m.id, sid: m.params.sessionId, picture: text.includes('PICTURE') };
           const ask = (k, title) => {
             update(turn.sid, { sessionUpdate: 'tool_call', toolCallId: `t${k}`, title, status: 'pending' });
             deliver({ jsonrpc: '2.0', id: `q${k}`, method: 'session/request_permission', params: { sessionId: turn.sid, toolCall: { title }, options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'no', kind: 'reject_once', name: 'Reject' }] } });
@@ -88,6 +104,6 @@ export function fakeGoose({ loadDelayMs = 0 } = {}) {
     queueMicrotask(() => ws.onopen?.());
     return ws;
   };
-  return { connect, sessions, sockets };
+  return { connect, sessions, sockets, prompts };
 }
 
