@@ -58,7 +58,7 @@ test('tool names read as words, without the gateway prefix', () => {
 /** A gateway with the fake server, plus a held call in it. */
 async function withGateway(body, env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'aemtli-apw-'));
-  writeFileSync(join(dir, 'policy.yaml'), 'allow: [read_*]\napprove: [send_*]\n');
+  writeFileSync(join(dir, 'policy.yaml'), 'allow: [read_*]\napprove: [send_*]\ndeny: [secret_*]\n');
   writeFileSync(join(dir, 'token'), TOKEN);
   const { gateway, servers } = await startGateway({
     MCP_COMMAND: JSON.stringify([process.execPath, FAKE]), POLICY_FILE: join(dir, 'policy.yaml'), ADMIN_TOKEN_FILE: join(dir, 'token'),
@@ -304,6 +304,8 @@ test('a login as the server tells it: ms-365-mcp-server\'s answers, or plain tex
   assert.equal(readLogin({ ok: false, text: 'the MCP server did not answer tools/call within 120s' }).ok, false);
   assert.equal(readLogin({ ok: true, text: 'Open http://example.com and enter the code X' }).url, null, 'https only');
   assert.equal(readLogin(said({ status: 'Already logged in' })).message, 'Already logged in');
+  assert.equal(readLogin({ ok: true, text: 'Open https://microsoft.com/devicelogin. Then enter the code ABC123.' }).url, 'https://microsoft.com/devicelogin', 'a full stop is not part of the address');
+  assert.equal(readLogin({ ok: true, text: 'Open https://microsoft.com/devicelogin.' }).url, 'https://microsoft.com/devicelogin');
 });
 
 test('the Connections page tells each gateway\'s login and renews it, same-origin only', () =>
@@ -318,8 +320,8 @@ test('the Connections page tells each gateway\'s login and renews it, same-origi
     const lines = [];
     const server = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', gateways, log: l => lines.push(l) }, { port: 0, host: '127.0.0.1' });
     const base = `http://127.0.0.1:${server.address().port}`;
-    const get = async path => {
-      const res = await fetch(`${base}${path}`);
+    const get = async (path, headers = { 'sec-fetch-site': 'same-origin' }) => {
+      const res = await fetch(`${base}${path}`, { headers });
       return { status: res.status, body: await res.json() };
     };
     const login = async (name, headers = { origin: ORIGIN }) => {
@@ -337,7 +339,8 @@ test('the Connections page tells each gateway\'s login and renews it, same-origi
         assert.match(res.headers.get('content-type'), /^text\/javascript/);
       }
 
-      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, loggedIn: false, who: null, message: 'Not logged in' });
+      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, canLogin: true, loggedIn: false, who: null, message: 'Not logged in' });
+      assert.equal((await get('/api/gateways/mail/account', { 'sec-fetch-site': 'cross-site' })).status, 403, 'each look starts a process: not for other sites');
       assert.equal((await get('/api/gateways/nope/account')).status, 404);
       assert.equal((await get('/api/gateways/mail/login')).status, 405);
       const gone = await get('/api/gateways/gone/account');
@@ -352,7 +355,7 @@ test('the Connections page tells each gateway\'s login and renews it, same-origi
       assert.deepEqual([started.body.login, started.body.ok, started.body.url, started.body.code], [true, true, 'https://microsoft.com/devicelogin', 'ABCD1234']);
       assert.ok(lines.some(l => / starts a new mail login$/.test(l)), 'the log says who started it');
       await new Promise(resolve => setTimeout(resolve, 250));
-      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, loggedIn: true, who: 'example@example.com', message: 'Login successful' });
+      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, canLogin: true, loggedIn: true, who: 'example@example.com', message: 'Login successful' });
     } finally {
       server.close();
     }
@@ -367,11 +370,11 @@ test('a gateway without a login of its own says so, and without gateways there i
     const none = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', log: () => {} }, { port: 0, host: '127.0.0.1' });
     const base = `http://127.0.0.1:${server.address().port}`;
     try {
-      assert.deepEqual(await (await fetch(`${base}/api/gateways/plain/account`)).json(), { login: false });
+      assert.deepEqual(await (await fetch(`${base}/api/gateways/plain/account`, { headers: { 'sec-fetch-site': 'same-origin' } })).json(), { login: false });
       assert.deepEqual(await (await fetch(`${base}/api/gateways/plain/login`, { method: 'POST', headers: { origin: ORIGIN } })).json(), { login: false });
       const empty = `http://127.0.0.1:${none.address().port}`;
       assert.match(await (await fetch(`${empty}/connections`)).text(), /No gateways yet/);
-      assert.equal((await fetch(`${empty}/api/gateways/plain/account`)).status, 404);
+      assert.equal((await fetch(`${empty}/api/gateways/plain/account`, { headers: { 'sec-fetch-site': 'same-origin' } })).status, 404);
     } finally {
       server.close();
       none.close();

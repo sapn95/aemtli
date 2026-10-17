@@ -18,7 +18,7 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `goose serve` | The agent the chat talks to, over ACP on a WebSocket that only the web pod can reach. It keeps every conversation, so the chat has a history. |
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
 | `aemtli mcp-gateway` | Serves one MCP server to the agents, in a pod that alone holds that server's credentials. Calls the owner has to approve are held until they decide in the UI. |
-| `aemtli mcp-kanban` | The kanban board ([golang-kanban](https://github.com/NicolasHaas/golang-kanban) v2) as MCP tools on stdio, for a gateway to run. See [The kanban board](#the-kanban-board). |
+| `aemtli mcp-kanban` | The kanban board as MCP tools on stdio, for a gateway to run. Works with [byge](https://github.com/sapn95/byge) only. See [The kanban board](#the-kanban-board). |
 | `aemtli mcp-recipes` | The chores in the GitOps repository, and a pull request to change one. See [Chores that improve themselves](#chores-that-improve-themselves). |
 | `aemtli mcp-github` | The owner's repositories through a GitHub App: read, merge a green pull request, tag a release. See [The repositories](#the-repositories). |
 
@@ -193,8 +193,10 @@ behind its own `aemtli mcp-gateway`:
   login tool and shows the page to open and the code to enter. The gateway
   keeps that process up for fifteen minutes, because a device-code login
   finishes only after the code is entered, and the page asks every ten
-  seconds until it has. This goes through the admin port only, so the policy
-  can keep denying the login tools to agents.
+  seconds until it has. The owner reaches the login tools through the admin
+  port only. Agents must not: one that started a login could pass the code
+  to someone who signs in with their own account, so the gateway does not
+  start unless its policy denies every tool `GATEWAY_ACCOUNT` names.
 
 ```yaml
 # a gateway's policy
@@ -349,9 +351,12 @@ key, PEM), and for a different host `GITHUB_API`.
 
 ## The kanban board
 
-Upstream golang-kanban v2 has no API: a person posts forms and reads pages.
-`aemtli mcp-kanban` does the same from inside the cluster, so goose and the
-jobs can read the board and keep cards on it:
+`aemtli mcp-kanban` works with [byge](https://github.com/sapn95/byge) only,
+the fork of golang-kanban v2 that ämtli's owner runs. It does what a person
+does on the board, posting byge's forms and reading its pages, from inside
+the cluster, so goose and the jobs can read the board and keep cards on it.
+It relies on byge's markup and on byge's service identity, so upstream
+golang-kanban or another fork will not work with it:
 
 | Tool | |
 | --- | --- |
@@ -363,15 +368,15 @@ jobs can read the board and keep cards on it:
 There is no tool to delete a card, a column or a board; that stays in the
 browser.
 
-The pages are read as the commit the cluster runs renders them, and the tests
-read pages recorded from that commit (`test/fixtures/kanban`). Record them
-again when the board moves to another commit.
+The pages are read as the byge release the cluster runs renders them, and
+the tests read pages recorded from that release (`test/fixtures/kanban`).
+Record them again when the board moves to another release.
 
 The board refuses a cross-site browser post. A request from a server carries
 no `Sec-Fetch-Site` and no `Origin`, so the gateway's posts go through; the
-board's NetworkPolicy is what decides who may reach it. A board that reads
-the signed-in user from a header (upstream's `AUTH_HEADER`) gets
-`KANBAN_AS` in the header `KANBAN_USER_HEADER` on every request.
+board's NetworkPolicy is what decides who may reach it. byge knows ämtli as
+a service identity: every request carries `KANBAN_AS` in the header
+`KANBAN_USER_HEADER`, which is byge's `AUTH_SERVICE_HEADER`.
 
 A job finds its cards again by a reference at the end of the description,
 `[ämtli:<ref>]`. A card the owner archived counts as dealt with and is not
@@ -408,9 +413,9 @@ and renew it, as
 Every other variable passes through to the MCP server, which is how it gets
 its credentials.
 
-`aemtli mcp-kanban`: `KANBAN_URL` (the board inside the cluster, e.g.
-`http://kanban.kanban.svc.cluster.local:17808`), and for a board that reads
-the user from a header, `KANBAN_AS` and `KANBAN_USER_HEADER`.
+`aemtli mcp-kanban`: `KANBAN_URL` (the byge board inside the cluster, e.g.
+`http://kanban.kanban.svc.cluster.local:17808`), and for byge's service
+identity `KANBAN_AS` and `KANBAN_USER_HEADER`.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),

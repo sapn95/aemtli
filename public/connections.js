@@ -42,7 +42,7 @@ async function check(row) {
     say(row, 'Reachable. It keeps no login of its own.', 'quiet');
     return state;
   }
-  row.querySelector('.login').hidden = false;
+  row.querySelector('.login').hidden = !state.canLogin;
   if (state.loggedIn) say(row, state.who ? `Logged in as ${state.who}.` : 'Logged in.', 'good');
   // The server's own words, unless they only say the same.
   else say(row, /^not logged in\.?$/i.test(state.message) || !state.message ? 'Not logged in.' : `Not logged in. ${state.message}`, 'bad');
@@ -76,6 +76,9 @@ function deviceCode(answer) {
 async function login(row, button) {
   const device = row.querySelector('.device');
   button.disabled = true;
+  // What held before: a login that still works answers "logged in" at once,
+  // so only a change says that the new one is done.
+  const before = await check(row);
   device.hidden = false;
   device.replaceChildren(element('p', 'Asking for a code…', 'quiet'));
   let answer;
@@ -95,14 +98,15 @@ async function login(row, button) {
   // One question at a time: the next waits until the last has its answer.
   while (Date.now() < until) {
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
-    if ((await check(row))?.loggedIn) {
+    const now = await check(row);
+    if (now?.loggedIn && (!before?.loggedIn || now.who !== before.who)) {
       device.hidden = true;
       device.replaceChildren();
       button.disabled = false;
       return;
     }
   }
-  waiting.textContent = 'The code has run out. Start again.';
+  waiting.textContent = before?.loggedIn ? 'The code has run out. The login from before still holds.' : 'The code has run out. Start again.';
   button.disabled = false;
 }
 

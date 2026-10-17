@@ -35,11 +35,11 @@ createInterface({ input: process.stdin }).on('line', line => {
       if (name === 'secret_login') {
         setTimeout(() => { loggedIn = true; }, 100);
         const message = 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ABCD1234 to authenticate.';
-        return ok({ content: [{ type: 'text', text: JSON.stringify({ error: 'device_code_required', message, force: args.force ?? null }) }] });
+        return ok({ content: [{ type: 'text', text: JSON.stringify({ error: 'device_code_required', message, force: args.force ?? null, pid: process.pid }) }] });
       }
       if (name === 'secret_status') {
         const answer = loggedIn ? { success: true, message: 'Login successful', userData: { displayName: 'Example', userPrincipalName: 'example@example.com' } } : { success: false, message: 'Not logged in' };
-        return ok({ content: [{ type: 'text', text: JSON.stringify(answer) }] });
+        return ok({ content: [{ type: 'text', text: JSON.stringify({ ...answer, pid: process.pid }) }] });
       }
       // The environment is how a real server gets its credentials.
       return ok({ content: [{ type: 'text', text: `${name} ${JSON.stringify(args)} call ${calls} secret=${process.env.FAKE_MCP_SECRET ?? 'none'} admin=${process.env.ADMIN_TOKEN_FILE ?? 'none'} account=${process.env.GATEWAY_ACCOUNT ?? 'none'}` }] });
