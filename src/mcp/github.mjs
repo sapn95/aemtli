@@ -10,11 +10,16 @@
 //
 // - A merge names the head commit the owner saw. If the branch moved since,
 //   nothing is merged: an approval is for that commit, not for the branch.
-// - Every check on that commit is green, and at least one ran. Branch
-//   protection would stop a red required check anyway; this also covers the
-//   repositories without protection, and checks that are not required.
-// - A pull request that changes .github/workflows is refused before GitHub
-//   would refuse it, since the App cannot write workflows.
+//   A rebase or squash still lands new commits on top of the default
+//   branch, so GitHub has to call the pull request clean (not behind, no
+//   conflict), which keeps what lands what the checks saw.
+// - Every check on that commit is green, at least one passed, and every one
+//   was read. Branch protection would stop a red required check anyway; this
+//   also covers the repositories without protection, and checks that are
+//   not required.
+// - A pull request from a fork is refused: its checks ran on code nobody
+//   here wrote. So is one that changes anything under .github, where the
+//   workflows (which the App cannot write) and the actions they run live.
 // - A release is a new v* tag on a commit the default branch already holds,
 //   green, and agreeing with package.json where there is one. The tag
 //   starts the repository's own release workflow; nothing here builds or
@@ -29,7 +34,11 @@ const NAME = /^[\w.-]{1,100}$/;
 const PER_PAGE = 100;
 const MAX_PAGES = 5;
 const GREEN = new Set(['success', 'skipped', 'neutral']);
-const WORKFLOWS = '.github/workflows/';
+// Workflows, the actions they call, and the files that steer Dependabot.
+const CI_DIR = '.github/';
+// What GitHub calls a pull request that can be merged as it stands; it
+// answers "unknown" (and mergeable null) while it is still working it out.
+const CLEAN = new Set(['clean', 'has_hooks']);
 const METHODS = new Set(['rebase', 'squash']);
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -59,14 +68,18 @@ export function judgeChecks(runs, statuses) {
     else if (s.state !== 'success') red.push(`${s.context} (${s.state})`);
   }
   const ran = runs.length + statuses.length;
-  const state = red.length ? 'red' : pending.length ? 'pending' : ran ? 'green' : 'none';
+  // Something has to have passed: a commit whose every check was skipped has
+  // been tested by nothing.
+  const passed = runs.filter(r => r.conclusion === 'success').length + statuses.filter(s => s.state === 'success').length;
+  const state = red.length ? 'red' : pending.length ? 'pending' : passed ? 'green' : 'none';
   return { state, ran, red, pending };
 }
 
 /** Why `checks` stops a merge or a release, or null if it does not. */
 function notGreen(checks, sha) {
+  if (!checks.complete) return `more checks reported on ${sha} than can be read here`;
   if (checks.state === 'green') return null;
-  if (checks.state === 'none') return `no check has reported on ${sha} yet`;
+  if (checks.state === 'none') return checks.ran ? `no check on ${sha} passed: every one was skipped` : `no check has reported on ${sha} yet`;
   if (checks.state === 'pending') return `checks on ${sha} are still running: ${checks.pending.join(', ')}`;
   return `checks on ${sha} failed: ${checks.red.join(', ')}`;
 }
@@ -137,7 +150,10 @@ export function createGitHub({ owner, token, api = 'https://api.github.com', fet
   async function checks(repo, sha) {
     const runs = await pages(`${base(repo)}/commits/${sha}/check-runs`, p => p?.check_runs);
     const combined = await call('GET', `${base(repo)}/commits/${sha}/status?per_page=${PER_PAGE}`);
-    return judgeChecks(runs.items, combined?.statuses ?? []);
+    const statuses = combined?.statuses ?? [];
+    // A check that was not read cannot be called green.
+    const complete = runs.complete && (combined?.total_count ?? statuses.length) <= statuses.length;
+    return { ...judgeChecks(runs.items, statuses), complete };
   }
 
   async function pull(repo, number) {
@@ -156,12 +172,13 @@ export function createGitHub({ owner, token, api = 'https://api.github.com', fet
       defaultBranch: pr.base?.repo?.default_branch,
       head: pr.head?.ref,
       sha: pr.head?.sha,
-      fork: Boolean(pr.head?.repo && pr.head.repo.full_name !== pr.base?.repo?.full_name),
+      // A head whose repository is gone is a fork that was deleted.
+      fork: !pr.head?.repo || pr.head.repo.full_name !== pr.base?.repo?.full_name,
       mergeable: pr.mergeable,
       mergeableState: pr.mergeable_state,
       files: files.items.map(f => f.filename),
       filesComplete: files.complete,
-      touchesWorkflows: names.some(n => n.startsWith(WORKFLOWS)),
+      touchesCi: names.some(n => n.startsWith(CI_DIR)),
       checks: pr.head?.sha ? await checks(repo, pr.head.sha) : null,
     };
   }
@@ -221,8 +238,10 @@ export function createGitHub({ owner, token, api = 'https://api.github.com', fet
       if (pr.draft) throw fail(409, `#${number} is a draft`);
       if (pr.base !== pr.defaultBranch) throw fail(409, `#${number} goes into ${pr.base}, not into ${pr.defaultBranch}`);
       if (pr.sha !== sha) throw fail(409, `#${number} moved: its head is ${pr.sha} now, and the merge was asked for ${sha}. Read it again.`);
+      if (pr.fork) throw fail(409, `#${number} comes from a fork; merge it by hand`);
       if (!pr.filesComplete) throw fail(409, `#${number} changes more files than can be read here; merge it by hand`);
-      if (pr.touchesWorkflows) throw fail(409, `#${number} changes ${WORKFLOWS}, which the App may not write; merge it by hand`);
+      if (pr.touchesCi) throw fail(409, `#${number} changes ${CI_DIR}, where CI and its actions live; merge it by hand`);
+      if (!pr.mergeable || !CLEAN.has(pr.mergeableState)) throw fail(409, `#${number} is not clean to merge (GitHub says ${pr.mergeableState ?? 'nothing yet'}); update the branch or try again in a minute`);
       const why = notGreen(pr.checks, sha);
       if (why) throw fail(409, why);
       const done = await call('PUT', `${base(repo)}/pulls/${number}/merge`, { sha, merge_method: method });
@@ -244,7 +263,10 @@ export function createGitHub({ owner, token, api = 'https://api.github.com', fet
       // base...head: "behind" means the commit is in the branch's history.
       if (!['identical', 'behind'].includes(compare?.status)) throw fail(409, `${sha} is not on ${branch}; a release is tagged on what was merged`);
       const pkg = await maybe(`${base(repo)}/contents/package.json?ref=${sha}`);
-      if (pkg?.content) {
+      if (pkg) {
+        // The contents API leaves a large file's content out, and a folder
+        // has none: neither can be compared, so neither is released.
+        if (typeof pkg.content !== 'string' || pkg.encoding !== 'base64') throw fail(409, `package.json at ${sha} cannot be read here`);
         let version;
         try {
           version = JSON.parse(Buffer.from(pkg.content, 'base64').toString('utf8')).version;
@@ -301,7 +323,7 @@ export function githubTools(github) {
     {
       name: 'github_merge',
       description: 'Merges one pull request into the default branch. It merges only if its head is still the commit given, every check on it is green, '
-        + 'and it does not change .github/workflows. Rebase by default, as the branches keep a linear history.',
+        + 'GitHub calls it clean, it is not from a fork, and it changes nothing under .github. Rebase by default, as the branches keep a linear history.',
       inputSchema: obj({
         repo: repoArg,
         number: { type: 'integer', minimum: 1 },
