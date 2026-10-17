@@ -75,7 +75,7 @@ block, which goose passes on to the model. Images that come back when goose
 replays a conversation are shown with the message they belong to. The server
 keeps up to 64 MB of them in memory and serves them by id under
 `/api/chats/<id>/images/<image>`; one it let go returns when the
-conversation is opened again.
+conversation is opened again, unless that one conversation alone holds more.
 
 A conversation can be put away or deleted from the chat's own header. Archived ones are
 hidden until the page asks for them; where they are kept is ämtli's own

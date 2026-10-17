@@ -311,6 +311,8 @@ export function createApp(deps) {
         if (body === null) return sendJson(res, 400, { error: say ? 'a JSON body of at most 12 MB' : 'a JSON body of at most 64 KB' });
         if (say) {
           if (typeof body.text !== 'string') return sendJson(res, 400, { error: 'text must be a string' });
+          // The larger body is for the images: the text keeps its old limit.
+          if (body.text.length > 65536) return sendJson(res, 400, { error: 'the text is longer than 64 KB' });
           let images;
           try {
             images = readImages(body.images);
