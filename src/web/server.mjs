@@ -12,7 +12,8 @@ import { jobMeta } from '../run/meta.mjs';
 import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
-import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
+import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage, connectionsPage } from './pages.mjs';
+import { readAccount, readLogin } from './approvals.mjs';
 import { runPrompt, QUESTION_CHARS } from './ask.mjs';
 import { readImages, MAX_IMAGES_BASE64 } from './chats.mjs';
 
@@ -22,6 +23,8 @@ const STATIC = {
   'app.css': 'text/css',
   'app.js': 'text/javascript',
   'chat.js': 'text/javascript',
+  'connections.js': 'text/javascript',
+  'copy.js': 'text/javascript',
   'fonts/schibsted-grotesk.woff2': 'font/woff2',
   'fonts/OFL.txt': 'text/plain',
 };
@@ -361,6 +364,28 @@ export function createApp(deps) {
     return send(res, 202, 'application/json', JSON.stringify({ job: job.metadata?.name }));
   }
 
+  /**
+   * A gateway's own login: GET .../account tells it, POST .../login starts
+   * a new one. A gateway without one answers 404, which is no fault.
+   */
+  async function gatewayAccount(req, res, user, name, what) {
+    const method = what === 'account' ? 'GET' : 'POST';
+    if (req.method !== method) return sendJson(res, 405, { error: `${method} only` });
+    if (method === 'POST' && !sameOrigin(req)) return crossSite(res);
+    if (!gateways?.configured || !gateways.list.some(g => g.name === name)) return sendJson(res, 404, { error: 'no such gateway' });
+    if (method === 'POST') log(`${user} starts a new ${name} login`);
+    let answer;
+    try {
+      answer = method === 'GET' ? await gateways.account(name) : await gateways.login(name);
+    } catch (err) {
+      log(`gateway ${name}: ${err.message}`);
+      return sendJson(res, 502, { error: err.name === 'TimeoutError' ? 'the gateway did not answer in time' : 'the gateway did not answer' });
+    }
+    if (answer.status === 404) return sendJson(res, 200, { login: false });
+    if (answer.status !== 200) return sendJson(res, 502, { error: `the gateway answered ${answer.status}` });
+    return sendJson(res, 200, { login: true, ...(method === 'GET' ? readAccount(answer.body) : readLogin(answer.body)) });
+  }
+
   /** Routes one authenticated request. */
   async function route(req, res, user) {
     const url = new URL(req.url, 'http://ui');
@@ -384,6 +409,11 @@ export function createApp(deps) {
       const all = gateways?.configured ? await gateways.all() : NONE;
       return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone, Boolean(chats)), 'app.js', 'approvals');
     }
+    if (req.method === 'GET' && path === '/connections') {
+      return page(res, user, 'Connections', connectionsPage(gateways?.configured ? gateways.list : []), 'connections.js', 'connections');
+    }
+    const account = path.match(/^\/api\/gateways\/([a-z0-9-]+)\/(account|login)$/);
+    if (account) return gatewayAccount(req, res, user, account[1], account[2]);
     if (path === '/api/chats' || path.startsWith('/api/chats/')) return chatApi(req, res, path);
     const star = path.match(/^\/api\/favorites\/([^/]+)\/(on|off)$/);
     if (req.method === 'POST' && star) {

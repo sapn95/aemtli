@@ -40,8 +40,52 @@ export function parseGateways(spec, tokensDir, read = path => readFileSync(path,
   });
 }
 
-// An approved call may take its 30-second start and its 120-second run.
-export function createGatewayClient({ gateways, fetchImpl = fetch, timeoutMs = 4000, decideTimeoutMs = 180_000 }) {
+/**
+ * What a gateway's status tool said about its login. ms-365-mcp-server's
+ * verify-login answers {success, message, userData}; any other server's
+ * text is shown as it is, and the login counts as fine when the call was.
+ */
+export function readAccount({ ok, text }) {
+  let said = null;
+  try {
+    said = JSON.parse(text);
+  } catch {
+    // Plain text.
+  }
+  if (said && typeof said === 'object' && typeof said.success === 'boolean') {
+    const who = said.userData?.userPrincipalName ?? said.userData?.displayName;
+    return { loggedIn: said.success, who: typeof who === 'string' ? who.slice(0, 200) : null, message: String(said.message ?? '').slice(0, 500) };
+  }
+  return { loggedIn: Boolean(ok), who: null, message: String(text ?? '').slice(0, 500) };
+}
+
+/**
+ * What a gateway's login tool said: for a device-code login, the page to
+ * open and the code to enter there. ms-365-mcp-server answers
+ * {error: "device_code_required", message}, with both in the message, and
+ * {error: "Authentication failed: ..."} when it could not start.
+ */
+export function readLogin({ ok, text }) {
+  let said = null;
+  try {
+    said = JSON.parse(text);
+  } catch {
+    // Plain text.
+  }
+  const fields = said && typeof said === 'object' ? said : {};
+  const message = String(fields.message ?? fields.error ?? fields.status ?? text ?? '').slice(0, 500);
+  const failed = !ok || (typeof fields.error === 'string' && fields.error !== 'device_code_required');
+  return {
+    ok: !failed,
+    url: message.match(/https:\/\/[^\s"'<>]+?(?=[.,;:)]?(?:\s|$))/)?.[0] ?? null,
+    code: message.match(/\bcode\s+([A-Z0-9-]{4,16})\b/i)?.[1] ?? null,
+    message,
+  };
+}
+
+// An approved call may take its 30-second start and its 120-second run; a
+// login's status or start, a server's start and one call to its provider.
+export function createGatewayClient({ gateways, fetchImpl = fetch, timeoutMs = 4000, decideTimeoutMs = 180_000, accountTimeoutMs = 45_000 }) {
   const byName = new Map(gateways.map(g => [g.name, g]));
 
   async function call(g, path, { method = 'GET', timeout = timeoutMs } = {}) {
@@ -86,6 +130,20 @@ export function createGatewayClient({ gateways, fetchImpl = fetch, timeoutMs = 4
       const g = byName.get(name);
       if (!g) return Promise.resolve({ status: 404, body: { error: 'no such gateway' } });
       return call(g, `/approvals/${encodeURIComponent(id)}/${verb}`, { method: 'POST', timeout: decideTimeoutMs });
+    },
+    /** Name and title of each gateway, in the order GATEWAYS lists them. */
+    list: gateways.map(g => ({ name: g.name, title: g.title })),
+    /** The login of the gateway's server; 404 where it has none to tell. */
+    account(name) {
+      const g = byName.get(name);
+      if (!g) return Promise.resolve({ status: 404, body: { error: 'no such gateway' } });
+      return call(g, '/account', { timeout: accountTimeoutMs });
+    },
+    /** Starts a new login at the gateway; 404 where it has none to renew. */
+    login(name) {
+      const g = byName.get(name);
+      if (!g) return Promise.resolve({ status: 404, body: { error: 'no such gateway' } });
+      return call(g, '/account/login', { method: 'POST', timeout: accountTimeoutMs });
     },
   };
 }

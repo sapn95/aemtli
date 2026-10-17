@@ -28,7 +28,7 @@ export default [
     files: ['public/**/*.js'],
     languageOptions: {
       sourceType: 'module',
-      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', EventSource: 'readonly', window: 'readonly', setInterval: 'readonly', fetch: 'readonly', console: 'readonly', localStorage: 'readonly', createImageBitmap: 'readonly' },
+      globals: { document: 'readonly', location: 'readonly', WebSocket: 'readonly', EventSource: 'readonly', window: 'readonly', setInterval: 'readonly', fetch: 'readonly', console: 'readonly', localStorage: 'readonly', createImageBitmap: 'readonly', navigator: 'readonly' },
     },
   },
   {

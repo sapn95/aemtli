@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePolicy } from '../src/gateway/policy.mjs';
 import { createApprovals } from '../src/gateway/approvals.mjs';
-import { startGateway } from '../src/gateway/server.mjs';
+import { startGateway, parseAccount } from '../src/gateway/server.mjs';
 import { writeJsonAtomic } from '../src/store/runs.mjs';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
@@ -101,7 +101,7 @@ test('reads pass through, the server keeps its credentials, the gateway its own 
     const sid = await open();
     const call = await rpc('tools/call', { name: 'read_thing', arguments: { id: '7' } }, sid);
     const text = call.body.result.content[0].text;
-    assert.match(text, /^read_thing \{"id":"7"\} call 1 secret=s3cret admin=none$/);
+    assert.match(text, /^read_thing \{"id":"7"\} call 1 secret=s3cret admin=none account=none$/);
   }));
 
 test('a call is held for its arguments, and the tool says when', () =>
@@ -277,6 +277,7 @@ test('a gateway will not start half configured', async () => {
   await assert.rejects(startGateway({ ...base, POLICY_FILE: '' }), /POLICY_FILE/);
   await assert.rejects(startGateway({ ...base, ADMIN_TOKEN_FILE: '' }), /ADMIN_TOKEN_FILE/);
   await assert.rejects(startGateway(base), /at least 16 characters/);
+  await assert.rejects(startGateway({ ...base, GATEWAY_ACCOUNT: '{"login":"login"}' }), /GATEWAY_ACCOUNT/);
 });
 
 test('a big answer comes through whole, and one past the limit stops the server', () =>
@@ -290,3 +291,54 @@ test('a big answer comes through whole, and one past the limit stops the server'
     assert.match(huge.body.error?.message ?? huge.body.result?.content?.[0]?.text ?? '', /exited|did not start/);
     assert.ok(lines.some(l => /sent a line over 24 MB/.test(l)), lines.join(' | '));
   }));
+
+const ACCOUNT = JSON.stringify({ status: { tool: 'secret_status' }, login: { tool: 'secret_login', arguments: { force: true } } });
+
+test('GATEWAY_ACCOUNT: a status, a login or both, each a tool with optional arguments', () => {
+  assert.equal(parseAccount(''), null);
+  assert.equal(parseAccount(undefined), null);
+  assert.deepEqual(parseAccount('{"status":{"tool":"verify-login"}}'), { status: { tool: 'verify-login' }, login: null });
+  assert.deepEqual(parseAccount(ACCOUNT).login, { tool: 'secret_login', arguments: { force: true } });
+  for (const bad of ['nope', '[]', '{}', '{"status":{}}', '{"login":{"tool":""}}', '{"login":{"tool":"x","arguments":[1]}}', '{"status":"verify-login"}']) {
+    assert.throws(() => parseAccount(bad), /GATEWAY_ACCOUNT/, bad);
+  }
+});
+
+test('without GATEWAY_ACCOUNT there is no login to tell or renew', () =>
+  withGateway(async ({ admin }) => {
+    assert.equal((await admin('/account')).status, 404);
+    assert.equal((await admin('/account/login', { method: 'POST' })).status, 404);
+  }));
+
+test('the owner sees and renews the server\'s login through the admin port, around the policy', () =>
+  withGateway(async ({ rpc, open, admin, lines }) => {
+    assert.equal((await admin('/account', { token: 'wrong-token-wrong-token' })).status, 401);
+    assert.equal((await admin('/account/login', { method: 'POST', token: null })).status, 401);
+    // Agents do not see the login tools, and cannot call them.
+    const sid = await open();
+    assert.ok(!(await rpc('tools/list', {}, sid)).body.result.tools.some(t => t.name.startsWith('secret_')));
+    assert.equal((await rpc('tools/call', { name: 'secret_login', arguments: {} }, sid)).body.error.message, 'Unknown tool: secret_login');
+    // And GATEWAY_ACCOUNT stays with the gateway.
+    assert.match((await rpc('tools/call', { name: 'read_thing', arguments: {} }, sid)).body.result.content[0].text, /account=none$/);
+
+    const before = await admin('/account');
+    assert.equal(before.status, 200);
+    assert.equal(JSON.parse(before.body.text).success, false);
+    const started = await admin('/account/login', { method: 'POST' });
+    assert.equal(started.status, 200);
+    assert.equal(started.body.ok, true);
+    const answer = JSON.parse(started.body.text);
+    assert.equal(answer.error, 'device_code_required');
+    assert.match(answer.message, /code ABCD1234/);
+    assert.equal(answer.force, true, 'with the arguments GATEWAY_ACCOUNT gives');
+    assert.ok(lines.includes('login with secret_login'));
+    // The login completes after the tool answered, in the same process: only
+    // a gateway that kept that process up and asks it learns of it.
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const after = JSON.parse((await admin('/account')).body.text);
+    assert.equal(after.success, true);
+    assert.equal(after.userData.userPrincipalName, 'example@example.com');
+    // A second login starts over in a process of its own.
+    await admin('/account/login', { method: 'POST' });
+    assert.equal(JSON.parse((await admin('/account')).body.text).success, false);
+  }, { env: { GATEWAY_ACCOUNT: ACCOUNT } }));

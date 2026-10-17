@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseGateways, createGatewayClient, createNotifier, toolWords } from '../src/web/approvals.mjs';
+import { parseGateways, createGatewayClient, createNotifier, toolWords, readAccount, readLogin } from '../src/web/approvals.mjs';
 import { needsYou } from '../src/web/pages.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
 import { startServer } from '../src/web/server.mjs';
@@ -56,13 +56,13 @@ test('tool names read as words, without the gateway prefix', () => {
 });
 
 /** A gateway with the fake server, plus a held call in it. */
-async function withGateway(body) {
+async function withGateway(body, env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'aemtli-apw-'));
   writeFileSync(join(dir, 'policy.yaml'), 'allow: [read_*]\napprove: [send_*]\n');
   writeFileSync(join(dir, 'token'), TOKEN);
   const { gateway, servers } = await startGateway({
     MCP_COMMAND: JSON.stringify([process.execPath, FAKE]), POLICY_FILE: join(dir, 'policy.yaml'), ADMIN_TOKEN_FILE: join(dir, 'token'),
-    STATE_DIR: join(dir, 'state'), PORT: '0', ADMIN_PORT: '0', HOST: '127.0.0.1', PATH: process.env.PATH,
+    STATE_DIR: join(dir, 'state'), PORT: '0', ADMIN_PORT: '0', HOST: '127.0.0.1', PATH: process.env.PATH, ...env,
   }, { log: () => {} });
   const [mcpPort, adminPort] = servers.map(s => s.address().port);
   const rpc = async (method, params, sid) => {
@@ -286,5 +286,94 @@ test('a decision can carry a word to goose, and the decision stands if that fail
       assert.equal(said.length, 2);
     } finally {
       server.close();
+    }
+  }));
+
+test('a login as the server tells it: ms-365-mcp-server\'s answers, or plain text', () => {
+  const said = text => ({ ok: true, text: JSON.stringify(text) });
+  assert.deepEqual(readAccount(said({ success: true, message: 'Login successful', userData: { displayName: 'Example', userPrincipalName: 'example@example.com' } })),
+    { loggedIn: true, who: 'example@example.com', message: 'Login successful' });
+  assert.deepEqual(readAccount(said({ success: false, message: 'No token' })), { loggedIn: false, who: null, message: 'No token' });
+  assert.deepEqual(readAccount({ ok: true, text: 'fine' }), { loggedIn: true, who: null, message: 'fine' });
+  assert.deepEqual(readAccount({ ok: false, text: 'the MCP server exited (1)' }), { loggedIn: false, who: null, message: 'the MCP server exited (1)' });
+  assert.equal(readAccount({ ok: true, text: 'x'.repeat(900) }).message.length, 500);
+
+  const code = readLogin(said({ error: 'device_code_required', message: 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ABCD1234 to authenticate.' }));
+  assert.deepEqual([code.ok, code.url, code.code], [true, 'https://microsoft.com/devicelogin', 'ABCD1234']);
+  assert.deepEqual(readLogin(said({ error: 'Authentication failed: no network' })), { ok: false, url: null, code: null, message: 'Authentication failed: no network' });
+  assert.equal(readLogin({ ok: false, text: 'the MCP server did not answer tools/call within 120s' }).ok, false);
+  assert.equal(readLogin({ ok: true, text: 'Open http://example.com and enter the code X' }).url, null, 'https only');
+  assert.equal(readLogin(said({ status: 'Already logged in' })).message, 'Already logged in');
+});
+
+test('the Connections page tells each gateway\'s login and renews it, same-origin only', () =>
+  withGateway(async ({ url, dir }) => {
+    mkdirSync(join(dir, 'recipes'));
+    const k8s = { listCronJobs: async () => [], listJobs: async () => [] };
+    const gateways = createGatewayClient({ gateways: [
+      { name: 'mail', title: 'Mail <b>', url, token: TOKEN },
+      { name: 'gone', title: 'Gone', url: 'http://127.0.0.1:1', token: TOKEN },
+      { name: 'wrong', title: 'Wrong', url, token: `${TOKEN}x` },
+    ] });
+    const lines = [];
+    const server = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', gateways, log: l => lines.push(l) }, { port: 0, host: '127.0.0.1' });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const get = async path => {
+      const res = await fetch(`${base}${path}`);
+      return { status: res.status, body: await res.json() };
+    };
+    const login = async (name, headers = { origin: ORIGIN }) => {
+      const res = await fetch(`${base}/api/gateways/${name}/login`, { method: 'POST', headers });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const page = await (await fetch(`${base}/connections`)).text();
+      assert.match(page, /<a href="\/connections" aria-current="page">Connections<\/a>/);
+      assert.match(page, /<li class="connection" data-gateway="mail">\s*<h2>Mail &lt;b&gt;<\/h2>/);
+      assert.match(page, /src="\/static\/connections\.js\?v=t"/);
+      for (const file of ['connections.js', 'copy.js']) {
+        const res = await fetch(`${base}/static/${file}`);
+        assert.equal(res.status, 200, file);
+        assert.match(res.headers.get('content-type'), /^text\/javascript/);
+      }
+
+      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, loggedIn: false, who: null, message: 'Not logged in' });
+      assert.equal((await get('/api/gateways/nope/account')).status, 404);
+      assert.equal((await get('/api/gateways/mail/login')).status, 405);
+      const gone = await get('/api/gateways/gone/account');
+      assert.deepEqual([gone.status, gone.body.error], [502, 'the gateway did not answer']);
+      assert.deepEqual(await get('/api/gateways/wrong/account'), { status: 502, body: { error: 'the gateway answered 401' } });
+
+      assert.equal((await login('mail', { origin: 'https://evil.example' })).status, 403);
+      assert.equal((await login('nope')).status, 404);
+      assert.equal(lines.filter(l => l.includes('login')).length, 0, 'nothing started yet');
+      const started = await login('mail');
+      assert.equal(started.status, 200);
+      assert.deepEqual([started.body.login, started.body.ok, started.body.url, started.body.code], [true, true, 'https://microsoft.com/devicelogin', 'ABCD1234']);
+      assert.ok(lines.some(l => / starts a new mail login$/.test(l)), 'the log says who started it');
+      await new Promise(resolve => setTimeout(resolve, 250));
+      assert.deepEqual((await get('/api/gateways/mail/account')).body, { login: true, loggedIn: true, who: 'example@example.com', message: 'Login successful' });
+    } finally {
+      server.close();
+    }
+  }, { GATEWAY_ACCOUNT: JSON.stringify({ status: { tool: 'secret_status' }, login: { tool: 'secret_login', arguments: { force: true } } }) }));
+
+test('a gateway without a login of its own says so, and without gateways there is no page to fill', () =>
+  withGateway(async ({ url, dir }) => {
+    mkdirSync(join(dir, 'recipes'));
+    const k8s = { listCronJobs: async () => [], listJobs: async () => [] };
+    const gateways = createGatewayClient({ gateways: [{ name: 'plain', title: 'Plain', url, token: TOKEN }] });
+    const server = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', gateways, log: () => {} }, { port: 0, host: '127.0.0.1' });
+    const none = await startServer({ k8s, dataDir: join(dir, 'data'), recipesDir: join(dir, 'recipes'), verify: null, allowedOrigin: ORIGIN, version: 't', log: () => {} }, { port: 0, host: '127.0.0.1' });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      assert.deepEqual(await (await fetch(`${base}/api/gateways/plain/account`)).json(), { login: false });
+      assert.deepEqual(await (await fetch(`${base}/api/gateways/plain/login`, { method: 'POST', headers: { origin: ORIGIN } })).json(), { login: false });
+      const empty = `http://127.0.0.1:${none.address().port}`;
+      assert.match(await (await fetch(`${empty}/connections`)).text(), /No gateways yet/);
+      assert.equal((await fetch(`${empty}/api/gateways/plain/account`)).status, 404);
+    } finally {
+      server.close();
+      none.close();
     }
   }));
