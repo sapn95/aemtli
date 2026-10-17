@@ -13,6 +13,8 @@ import { startModelProxy } from '../src/proxy/model-proxy.mjs';
 import { startGateway } from '../src/gateway/server.mjs';
 import { createKanban, kanbanTools } from '../src/mcp/kanban.mjs';
 import { createRecipes, recipeTools } from '../src/mcp/recipes.mjs';
+import { createGitHub, githubTools } from '../src/mcp/github.mjs';
+import { createAppAuth } from '../src/mcp/github-app.mjs';
 import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 
@@ -51,6 +53,7 @@ const USAGE = `ämtli ${version}
   aemtli mcp-gateway                           serve one MCP server to the agents, holding calls for approval
   aemtli mcp-kanban                            the kanban board as an MCP server on stdio, for a gateway
   aemtli mcp-recipes                           the chores in git as an MCP server on stdio, for a gateway
+  aemtli mcp-github                            the owner's repositories as an MCP server on stdio, for a gateway
 
 Settings come from the environment; see the README.`;
 
@@ -285,11 +288,22 @@ async function mcpKanban() {
 async function mcpRecipes() {
   let recipes;
   try {
+    const repo = required('RECIPES_REPO');
+    // A fine-grained token in a file, or the GitHub App's token narrowed to
+    // this repository and the two permissions a proposal needs.
+    let token;
+    if (env.RECIPES_TOKEN_FILE) {
+      token = readFileSync(env.RECIPES_TOKEN_FILE, 'utf8').trim();
+    } else {
+      const [owner, name] = repo.split('/');
+      const auth = appAuth(owner);
+      token = () => auth({ repositories: [name], permissions: { contents: 'write', pull_requests: 'write' } });
+    }
     recipes = createRecipes({
-      repo: required('RECIPES_REPO'),
+      repo,
       path: required('RECIPES_REPO_PATH'),
       base: env.RECIPES_REPO_BRANCH || 'main',
-      token: readFileSync(required('RECIPES_TOKEN_FILE'), 'utf8').trim(),
+      token,
       api: env.GITHUB_API || undefined,
       branchPrefix: env.RECIPES_BRANCH_PREFIX || undefined,
     });
@@ -300,6 +314,36 @@ async function mcpRecipes() {
   await serveStdio({ name: 'aemtli-recipes', version, tools: recipeTools(recipes) });
 }
 
+/**
+ * The GitHub App's installation tokens for `owner`: GITHUB_APP_ID and the
+ * private key in GITHUB_APP_KEY_FILE.
+ */
+function appAuth(owner) {
+  return createAppAuth({
+    appId: required('GITHUB_APP_ID'),
+    privateKey: readFileSync(required('GITHUB_APP_KEY_FILE'), 'utf8'),
+    owner,
+    api: env.GITHUB_API || undefined,
+  });
+}
+
+/**
+ * `aemtli mcp-github`: the repositories of GITHUB_OWNER as MCP tools on
+ * stdio, through the GitHub App. A gateway runs it; stdout is the protocol,
+ * so nothing else may go there.
+ */
+async function mcpGitHub() {
+  let github;
+  try {
+    const owner = required('GITHUB_OWNER');
+    github = createGitHub({ owner, token: appAuth(owner), api: env.GITHUB_API || undefined });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  await serveStdio({ name: 'aemtli-github', version, tools: githubTools(github) });
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'job') await job(rest);
@@ -308,6 +352,7 @@ else if (command === 'model-proxy') await modelProxy();
 else if (command === 'mcp-gateway') await mcpGateway();
 else if (command === 'mcp-kanban') await mcpKanban();
 else if (command === 'mcp-recipes') await mcpRecipes();
+else if (command === 'mcp-github') await mcpGitHub();
 else {
   console.log(USAGE);
   process.exit(command === '--help' || command === undefined ? 0 : 2);

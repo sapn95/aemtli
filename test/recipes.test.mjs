@@ -212,3 +212,16 @@ test('over stdio: a call that works, and a refusal the agent can read', async ()
   assert.equal(refused.isError, true);
   assert.match(refused.content[0].text, /not a recipe: .*title/);
 });
+
+test('a token can be a function, asked on every call: the App\'s token runs out after an hour', async () => {
+  const issued = [];
+  const fetchImpl = async (url, init) => {
+    issued.push(init.headers.authorization);
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+  let n = 0;
+  const recipes = createRecipes({ repo: 'o/r', path: 'c', token: async () => `t${++n}`, fetchImpl });
+  await recipes.list();
+  await recipes.list();
+  assert.deepEqual(issued, ['Bearer t1', 'Bearer t2']);
+});
