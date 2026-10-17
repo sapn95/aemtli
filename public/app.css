@@ -373,7 +373,34 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 .chat-main { min-width: 0; }
 .chat-main .chat-bar { margin-top: 0; }
 .chat-item.archived .title { color: var(--pencil); }
+/* Archive and delete sit on the second line, beside the time, so the title
+   keeps the whole width. They are buttons beside the link, not in it. */
+.chat-row { position: relative; }
+.chat-tools { position: absolute; right: 0.3rem; bottom: 0.2rem; display: flex; gap: 0.1rem; }
+.icon-button { display: inline-flex; padding: 0.2rem; border: 0; border-radius: 4px; background: transparent; color: var(--pencil); }
+.icon-button:hover:not(:disabled) { background: var(--royal-soft); color: var(--royal); filter: none; }
+.icon-button.danger:hover:not(:disabled) { background: var(--redpen-soft); color: var(--redpen); }
+.icon-button:disabled { border: 0; }
+
+/* A code box carries its Copy button in its top right corner, where a short
+   first line leaves room. */
+.code-box { position: relative; }
+.code-box .copy { position: absolute; top: 0.3rem; right: 0.3rem; padding: 0.15rem 0.55rem; font-size: 0.8125rem; background: var(--sheet); border: 1px solid var(--rule); }
+.code-box .copy:hover:not(:disabled) { background: var(--royal-soft); }
+
+.connection-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; max-width: 40rem; }
+.connection { border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); padding: 0.85rem 1rem; }
+.connection h2 { margin: 0 0 0.25rem; font-size: 1.125rem; }
+.connection .account { margin: 0 0 0.5rem; }
+.account.good { color: var(--green); }
+.account.bad, .device .bad { color: var(--redpen); }
+.device { margin-top: 0.75rem; }
+.device p { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
+.code-row { display: flex; align-items: center; gap: 0.75rem; }
+.device .code { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.12em; }
 .show-archived { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; color: var(--pencil); font-size: 0.875rem; }
+/* display: flex would show it with nothing put away. */
+.show-archived[hidden] { display: none; }
 
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; margin-top: 1rem; }
 .chat-bar h1 { margin: 0 auto 0 0; font-size: 1.75rem; }
@@ -386,7 +413,9 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
   display: flex; flex-direction: column; gap: 0.75rem;
   padding: 1rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px;
 }
-.msg { max-width: 46rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Never wider than the conversation: a long code line scrolls in its own box,
+   and that box keeps its Copy button in view. */
+.msg { max-width: min(46rem, 100%); min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user { align-self: flex-end; background: var(--royal-soft); padding: 0.5rem 0.85rem; border-radius: 6px; }
 .msg.agent { align-self: flex-start; }
 /* The two buttons that act on the open conversation: text, not boxes, and

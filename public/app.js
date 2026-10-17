@@ -1,6 +1,11 @@
+import { addCopyButtons } from './copy.js';
+
 // "Run now" buttons on the dashboard and the recipe page. The server checks
 // that the request is same-origin; this only has to make it and say how it went.
 const notice = document.getElementById('notice');
+
+// The run's answer, goose's log and a held call's long arguments.
+addCopyButtons(document.querySelector('main') ?? document.body);
 
 for (const button of document.querySelectorAll('button.run')) {
   button.addEventListener('click', async () => {

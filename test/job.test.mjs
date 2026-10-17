@@ -90,7 +90,7 @@ test('a job calls a gateway like an agent does, approvals included', async () =>
     const run = await runJob({ name: 'post', recipesDir, dataDir, gateways: { fake: `http://127.0.0.1:${servers[0].address().port}/mcp` }, anthropic: null });
     assert.equal(run.status, 'succeeded', run.error);
     const [tools, readText, sendText] = read(dataDir, 'post', run.id, 'result.md').trim().split('\n');
-    assert.equal(tools, 'read_thing,send_thing,secret_thing');
+    assert.equal(tools, 'read_thing,send_thing,secret_thing,secret_login,secret_status');
     assert.match(readText, /^read_thing \{"id":"1"\} call 1/);
     assert.match(sendText, /^Not done yet: send_thing needs the owner's approval/);
     assert.equal(run.tokens.total, 0, 'no model, no tokens');

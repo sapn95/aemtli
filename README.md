@@ -77,10 +77,14 @@ keeps up to 64 MB of them in memory and serves them by id under
 `/api/chats/<id>/images/<image>`; one it let go returns when the
 conversation is opened again, unless that one conversation alone holds more.
 
-A conversation can be put away or deleted from the chat's own header. Archived ones are
+A conversation can be put away or deleted from its line in the list (the box
+and the bin beside the time) or from the chat's own header. Archived ones are
 hidden until the page asks for them; where they are kept is ämtli's own
 business, because goose has no archive over ACP. Deleting one deletes it at
 goose, and that cannot be undone.
+
+Every code block has a Copy button: in goose's answers, in a run's result and
+log, and in a held call's long arguments.
 
 A conversation keeps the tool servers it was made with: goose stores them
 per session, so a gateway added afterwards shows up in new conversations,
@@ -183,6 +187,14 @@ behind its own `aemtli mcp-gateway`:
   goes into a conversation once the call is decided, so a call rejected for
   the wrong date is corrected in the same breath. The decision stands even
   when the message does not go through, and the answer says which it was.
+- A server that keeps a login of its own, like Outlook's, is logged in again
+  from the Connections page, with no kubectl. The page shows each gateway and
+  whether its login works; "Log in again" has the gateway call the server's
+  login tool and shows the page to open and the code to enter. The gateway
+  keeps that process up for fifteen minutes, because a device-code login
+  finishes only after the code is entered, and the page asks every ten
+  seconds until it has. This goes through the admin port only, so the policy
+  can keep denying the login tools to agents.
 
 ```yaml
 # a gateway's policy
@@ -389,9 +401,12 @@ made again.
 
 `aemtli mcp-gateway`: `MCP_COMMAND` (the server's argv as JSON),
 `POLICY_FILE`, `ADMIN_TOKEN_FILE` (at least 16 characters), `STATE_DIR`
-(`/state`), `PORT` (8080, for agents), `ADMIN_PORT` (8081, for the UI). Every
-other variable passes through to the MCP server, which is how it gets its
-credentials.
+(`/state`), `PORT` (8080, for agents), `ADMIN_PORT` (8081, for the UI), and
+`GATEWAY_ACCOUNT` for a server with a login of its own: the tools that tell
+and renew it, as
+`{"status":{"tool":"verify-login"},"login":{"tool":"login","arguments":{"force":true}}}`.
+Every other variable passes through to the MCP server, which is how it gets
+its credentials.
 
 `aemtli mcp-kanban`: `KANBAN_URL` (the board inside the cluster, e.g.
 `http://kanban.kanban.svc.cluster.local:17808`), and for a board that reads

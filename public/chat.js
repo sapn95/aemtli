@@ -12,6 +12,8 @@
 // file (its location, the camera) leaves the phone. The page shows images
 // from the server by id, never from the stream.
 
+import { addCopyButtons } from './copy.js';
+
 const list = document.getElementById('chats');
 const log = document.getElementById('log');
 const form = document.getElementById('form');
@@ -65,6 +67,35 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+const SVG = 'http://www.w3.org/2000/svg';
+// Lucide's archive, archive-restore and trash-2 (ISC licence), as paths on a
+// 24-unit grid.
+const BOX = 'M3 3h18a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z';
+const ICONS = {
+  archive: [BOX, 'M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8', 'M10 12h4'],
+  restore: [BOX, 'M4 8v11a2 2 0 0 0 2 2h2', 'M20 8v11a2 2 0 0 1-2 2h-2', 'm9 15 3-3 3 3', 'M12 12v9'],
+  delete: ['M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M10 11v6', 'M14 11v6'],
+};
+
+/** A button that shows only an icon; `label` is what it says to a screen reader and on hover. */
+function iconButton(name, label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `icon-button${name === 'delete' ? ' danger' : ''}`;
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  const svg = document.createElementNS(SVG, 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: '16', height: '16', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+  for (const d of ICONS[name]) {
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  button.append(svg);
+  button.addEventListener('click', () => onClick(button));
+  return button;
+}
+
 /** The two buttons that act on the conversation that is open. */
 function showActions(title) {
   archiveButton.disabled = !current;
@@ -103,7 +134,16 @@ async function refreshList() {
     meta.className = `meta ${c.status}`;
     meta.textContent = c.status === 'running' ? 'working' : c.status === 'waiting' ? 'asks you' : `${c.archived ? 'archived · ' : ''}${ago(c.updatedAt)}`;
     a.append(title, meta);
-    li.append(a);
+    // Beside the time, on the second line: the title keeps the whole width.
+    const tools = document.createElement('span');
+    tools.className = 'chat-tools';
+    const name = c.title || 'Untitled';
+    tools.append(
+      iconButton(c.archived ? 'restore' : 'archive', c.archived ? `Put “${name}” back` : `Archive “${name}”`, button => setArchived(c.id, !c.archived, button)),
+      iconButton('delete', `Delete “${name}”`, button => remove(c.id, c.title, button)),
+    );
+    li.className = 'chat-row';
+    li.append(a, tools);
     return li;
   }));
   if (!shown.length) {
@@ -162,6 +202,7 @@ function render(e, index) {
   } else if (e.type === 'agent' && typeof e.html === 'string') {
     el.className = 'msg agent md';
     el.innerHTML = e.html;
+    addCopyButtons(el);
   } else {
     el.className = `msg ${e.type}`;
     // A node of its own, so text that streams in later leaves the images be.
@@ -426,32 +467,41 @@ fresh.addEventListener('click', () => {
   refreshList();
 });
 
-archiveButton.addEventListener('click', async () => {
-  if (!current) return;
-  archiveButton.disabled = true;
+/** Puts a conversation away, or back; `button` waits meanwhile. */
+async function setArchived(id, archived, button) {
+  button.disabled = true;
   try {
-    await api(`/api/chats/${encodeURIComponent(current)}/archive`, { method: 'POST', body: { archived: !away.has(current) } });
+    await api(`/api/chats/${encodeURIComponent(id)}/archive`, { method: 'POST', body: { archived } });
     await refreshList();
   } catch (err) {
     state.textContent = `Not changed: ${err.message}`;
-    archiveButton.disabled = false;
+    button.disabled = false;
   }
-});
+}
 
-deleteButton.addEventListener('click', async () => {
-  if (!current) return;
-  const what = deleteButton.dataset.title || 'this conversation';
-  if (!window.confirm(`Delete “${what}”? The whole conversation goes, at goose as well, and that cannot be undone.`)) return;
-  deleteButton.disabled = true;
+/** Deletes a conversation once the owner has said yes. */
+async function remove(id, title, button) {
+  if (!window.confirm(`Delete “${title || 'this conversation'}”? The whole conversation goes, at goose as well, and that cannot be undone.`)) return;
+  button.disabled = true;
   try {
-    await api(`/api/chats/${encodeURIComponent(current)}`, { method: 'DELETE' });
-    location.hash = '';
-    open(null);
+    await api(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (id === current) {
+      location.hash = '';
+      open(null);
+    }
     await refreshList();
   } catch (err) {
     state.textContent = `Not deleted: ${err.message}`;
-    deleteButton.disabled = false;
+    button.disabled = false;
   }
+}
+
+archiveButton.addEventListener('click', () => {
+  if (current) setArchived(current, !away.has(current), archiveButton);
+});
+
+deleteButton.addEventListener('click', () => {
+  if (current) remove(current, deleteButton.dataset.title, deleteButton);
 });
 
 showArchived.addEventListener('change', refreshList);

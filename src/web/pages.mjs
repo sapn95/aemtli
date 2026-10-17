@@ -64,7 +64,7 @@ export function layout({ title, user, version, body, script, active }) {
 <body>
 <header class="top">
   <a class="wordmark" href="/">ämtli</a>
-  <nav>${nav('/', 'Chores', 'chores')}${nav('/approvals', 'Approvals', 'approvals')}${nav('/chat', 'Chat', 'chat')}</nav>
+  <nav>${nav('/', 'Chores', 'chores')}${nav('/approvals', 'Approvals', 'approvals')}${nav('/chat', 'Chat', 'chat')}${nav('/connections', 'Connections', 'connections')}</nav>
   <span class="who">${esc(user ?? '')}</span>
 </header>
 <main>
@@ -247,6 +247,30 @@ export function needsYou({ items, unreachable }, timeZone, chat = false) {
   return `<section class="needs" id="needs" aria-labelledby="needs-title">
 ${items.length ? `<h2 id="needs-title">Needs you</h2><ul class="requests">\n${cards}\n</ul>` : '<h2 id="needs-title" class="visually-hidden">Gateways</h2>'}
 ${unreachableNote(unreachable)}
+</section>`;
+}
+
+/**
+ * What goose reaches, one gateway each, and the logins they keep. The page
+ * asks each gateway itself (connections.js), so a slow one holds up nothing.
+ */
+export function connectionsPage(gateways) {
+  if (!gateways.length) {
+    return `<section class="empty"><h1>No gateways yet</h1>
+<p>A gateway serves one MCP server to the agents and holds the calls that need your approval. Set <code>GATEWAYS</code> to list them, as the README describes.</p></section>`;
+  }
+  const rows = gateways.map(g => `<li class="connection" data-gateway="${esc(g.name)}">
+  <h2>${esc(g.title)}</h2>
+  <p class="account quiet" role="status">Asking…</p>
+  <button type="button" class="login" hidden>Log in again</button>
+  <div class="device" hidden></div>
+</li>`).join('\n');
+  return `<section class="connections">
+<h1>Connections</h1>
+<p class="quiet">What goose reaches, one gateway each. A gateway that keeps a login of its own, such as Outlook, renews it here.</p>
+<ul class="connection-list">
+${rows}
+</ul>
 </section>`;
 }
 

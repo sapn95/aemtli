@@ -4,6 +4,10 @@
 // it applies the policy: a tool on the approve list does not run, it is held
 // until the owner decides in the ämtli UI. The UI reaches the held calls
 // through a second port, with a token the agents never get.
+//
+// The same port lets the owner see and renew the server's own login, where
+// the server has one (GATEWAY_ACCOUNT names its tools). Agents are denied
+// those tools by the policy; the owner reaches them here, around it.
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -55,10 +59,32 @@ function resultText(result) {
 }
 
 /**
- * Builds the two handlers. `command` is the MCP server's argv, `env` its
- * environment, `policy` from parsePolicy, `approvals` from createApprovals.
+ * Reads GATEWAY_ACCOUNT: the tools that tell and renew the server's login,
+ * as {"status":{"tool":"verify-login"},"login":{"tool":"login","arguments":{"force":true}}}.
+ * Either may be missing. Null when unset.
  */
-export function createGateway({ command, env = process.env, policy, approvals, adminToken, version = '0', log = console.log, idleMs = 15 * 60_000, maxSessions = 8, timeoutMs = 120_000 }) {
+export function parseAccount(spec) {
+  if (!spec) return null;
+  let account;
+  try {
+    account = JSON.parse(spec);
+  } catch {
+    account = null;
+  }
+  const valid = step => step === undefined || (step && typeof step.tool === 'string' && step.tool
+    && (step.arguments === undefined || (step.arguments && typeof step.arguments === 'object' && !Array.isArray(step.arguments))));
+  if (!account || typeof account !== 'object' || !valid(account.status) || !valid(account.login) || !(account.status || account.login)) {
+    throw new Error('GATEWAY_ACCOUNT must be JSON: {"status":{"tool":"verify-login"},"login":{"tool":"login"}}');
+  }
+  return { status: account.status ?? null, login: account.login ?? null };
+}
+
+/**
+ * Builds the two handlers. `command` is the MCP server's argv, `env` its
+ * environment, `policy` from parsePolicy, `approvals` from createApprovals,
+ * `account` from parseAccount. A login's process lives `loginMs` at most.
+ */
+export function createGateway({ command, env = process.env, policy, approvals, adminToken, account = null, version = '0', log = console.log, idleMs = 15 * 60_000, maxSessions = 8, timeoutMs = 120_000, loginMs = 15 * 60_000 }) {
   if (!adminToken || adminToken.length < 16) throw new Error('the admin token must be at least 16 characters');
   const sessions = new Map();
   const childOptions = { env, timeoutMs, log };
@@ -193,20 +219,61 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     return json(res, 200, Array.isArray(body) ? replies : replies[0], headers);
   }
 
+  /** Calls one tool in `child`, whose MCP conversation has begun. */
+  async function toolCall(child, tool, args) {
+    const response = await child.request('tools/call', { name: tool, arguments: args });
+    if (response.error) return { ok: false, text: response.error.message };
+    return { ok: !response.result?.isError, text: resultText(response.result) };
+  }
+
+  /** Begins the MCP conversation with `child` and calls one tool in it. */
+  async function callIn(child, tool, args) {
+    const init = await child.request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'aemtli-gateway', version } }, 30_000);
+    if (init.error) throw new Error(`initialize: ${init.error.message}`);
+    child.notify('notifications/initialized');
+    return toolCall(child, tool, args);
+  }
+
   /** Runs an approved call in a process of its own. */
   async function execute(record) {
     const child = spawnChild(command, childOptions);
     try {
-      const init = await child.request('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'aemtli-gateway', version } }, 30_000);
-      if (init.error) throw new Error(`initialize: ${init.error.message}`);
-      child.notify('notifications/initialized');
-      const response = await child.request('tools/call', { name: record.tool, arguments: record.arguments });
-      if (response.error) return { ok: false, text: response.error.message };
-      return { ok: !response.result?.isError, text: resultText(response.result) };
+      return await callIn(child, record.tool, record.arguments);
     } catch (err) {
       return { ok: false, text: err.message };
     } finally {
       await child.close();
+    }
+  }
+
+  // A device-code login goes on after its tool has answered: the server
+  // waits for the owner to enter the code, then writes its token cache. So
+  // its process stays up for as long as a code is good, and a new login
+  // ends the one before. While it is up, the status is asked there: that
+  // process knows first, and no second one reads a cache it is writing.
+  let login = null;
+  function endLogin() {
+    if (!login) return Promise.resolve();
+    const { child, timer } = login;
+    login = null;
+    clearTimeout(timer);
+    return child.close();
+  }
+
+  async function startLogin() {
+    await endLogin();
+    const child = spawnChild(command, childOptions);
+    const timer = setTimeout(() => { if (login?.child === child) endLogin(); }, loginMs);
+    timer.unref();
+    login = { child, timer, ready: false };
+    child.exited.then(() => { if (login?.child === child) endLogin(); });
+    try {
+      const outcome = await callIn(child, account.login.tool, account.login.arguments ?? {});
+      if (login?.child === child) login.ready = true;
+      return outcome;
+    } catch (err) {
+      if (login?.child === child) await endLogin();
+      return { ok: false, text: err.message };
     }
   }
 
@@ -222,6 +289,23 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     if (path === '/healthz') return json(res, 200, { ok: true });
     if (!authorised(req)) return json(res, 401, { error: 'unauthorised' });
     if (req.method === 'GET' && path === '/approvals') return json(res, 200, { approvals: approvals.list() });
+    if (req.method === 'GET' && path === '/account') {
+      if (!account?.status) return json(res, 404, { error: 'no login to tell' });
+      const { tool, arguments: args = {} } = account.status;
+      if (login?.ready) {
+        try {
+          return json(res, 200, await toolCall(login.child, tool, args));
+        } catch {
+          // It ended in between; a process of its own answers instead.
+        }
+      }
+      return json(res, 200, await execute({ tool, arguments: args }));
+    }
+    if (req.method === 'POST' && path === '/account/login') {
+      if (!account?.login) return json(res, 404, { error: 'no login to renew' });
+      log(`login with ${account.login.tool}`);
+      return json(res, 200, await startLogin());
+    }
     const action = path.match(/^\/approvals\/([^/]+)\/(approve|reject)$/);
     if (req.method === 'POST' && action && APPROVAL_ID.test(action[1])) {
       const [, id, verb] = action;
@@ -242,6 +326,7 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     sessions,
     async close() {
       clearInterval(reaper);
+      await endLogin();
       await Promise.all([...sessions.keys()].map(id => {
         const s = sessions.get(id);
         sessions.delete(id);
@@ -266,11 +351,12 @@ export async function startGateway(env = process.env, { version = '0', log = con
   if (!env.ADMIN_TOKEN_FILE) throw new Error('ADMIN_TOKEN_FILE is required');
   const policy = parsePolicy(readFileSync(env.POLICY_FILE, 'utf8'));
   const adminToken = readFileSync(env.ADMIN_TOKEN_FILE, 'utf8').trim();
+  const account = parseAccount(env.GATEWAY_ACCOUNT);
   const approvals = createApprovals({ dir: `${env.STATE_DIR ?? '/state'}/approvals` });
   // The server gets the gateway's environment minus the gateway's own settings.
-  const own = new Set(['MCP_COMMAND', 'POLICY_FILE', 'ADMIN_TOKEN_FILE', 'STATE_DIR', 'PORT', 'ADMIN_PORT', 'HOST']);
+  const own = new Set(['MCP_COMMAND', 'POLICY_FILE', 'ADMIN_TOKEN_FILE', 'STATE_DIR', 'PORT', 'ADMIN_PORT', 'HOST', 'GATEWAY_ACCOUNT']);
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !own.has(k)));
-  const gateway = createGateway({ command, env: childEnv, policy, approvals, adminToken, version, log });
+  const gateway = createGateway({ command, env: childEnv, policy, approvals, adminToken, account, version, log });
   const host = env.HOST ?? '0.0.0.0';
   const listen = (handler, port) => new Promise((resolve, reject) => {
     const server = createServer((req, res) => handler(req, res).catch(err => {
