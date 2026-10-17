@@ -280,6 +280,8 @@ test('the chat API takes images with a message, and serves them back by id', asy
     assert.equal(refused.status, 400);
     assert.match(JSON.parse(refused.body).error, /not the PNG it says it is/);
     assert.equal((await post(port, `/api/chats/${id}/say`, { text: 7 }, same)).status, 400);
+    const long = await post(port, `/api/chats/${id}/say`, { text: 'x'.repeat(65537) }, same);
+    assert.match(JSON.parse(long.body).error, /text is longer than 64 KB/, 'the text keeps its old limit');
     assert.equal((await post(port, `/api/chats/${id}/say`, { text: ' ', images: [] }, same)).status, 400, 'nothing to say');
     assert.equal((await post(port, `/api/chats/${id}/say`, { text: ' ', images: [{ mimeType: 'image/png', data: PNG }] }, same)).status, 202, 'an image alone');
     await new Promise(r => setTimeout(r, 20));

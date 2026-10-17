@@ -164,7 +164,8 @@ function render(e, index) {
     el.innerHTML = e.html;
   } else {
     el.className = `msg ${e.type}`;
-    el.textContent = e.text ?? '';
+    // A node of its own, so text that streams in later leaves the images be.
+    el.append(document.createTextNode(e.text ?? ''));
   }
   if (e.images?.length) el.append(shots(e.images));
   return el;
@@ -257,8 +258,7 @@ function open(id) {
       const el = log.querySelector(`[data-index="${m.index}"]`);
       // An answer already drawn from Markdown waits for its next drawing;
       // one that is not shows its text as it grows.
-      if (el && events[m.index].images?.length) el.replaceWith(render(events[m.index], m.index));
-      else if (el && !el.classList.contains('md')) el.textContent = events[m.index].text;
+      if (el && !el.classList.contains('md')) el.firstChild.nodeValue = events[m.index].text;
       log.scrollTop = log.scrollHeight;
     } else if (m.kind === 'replace') {
       events[m.index] = m.event;
@@ -284,7 +284,8 @@ function open(id) {
 
 /** An image file as a JPEG of at most LONG_SIDE pixels, in base64. */
 async function shrink(file) {
-  const bitmap = await createImageBitmap(file);
+  // Upright as the camera meant it, which a phone records in the file.
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   const scale = Math.min(1, LONG_SIDE / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
@@ -321,8 +322,19 @@ function showPictures() {
   }));
 }
 
-async function addPictures(files) {
-  for (const file of [...files].filter(f => f.type.startsWith('image/'))) {
+// One batch at a time: the picker, a paste and a drop each wait for the one
+// before, so together they cannot pass MAX_PICTURES.
+let adding = Promise.resolve();
+function addPictures(files) {
+  // Copied now: a drop's file list is emptied once its event is over.
+  const list = [...files];
+  adding = adding.then(() => addNow(list)).catch(() => {});
+  return adding;
+}
+
+async function addNow(files) {
+  if (files.some(f => !f.type.startsWith('image/'))) state.textContent = 'Only images can go with a message.';
+  for (const file of files.filter(f => f.type.startsWith('image/'))) {
     if (pictures.length >= MAX_PICTURES) {
       state.textContent = `At most ${MAX_PICTURES} images go with one message.`;
       break;
@@ -338,8 +350,9 @@ async function addPictures(files) {
 
 attach.addEventListener('click', () => pick.click());
 pick.addEventListener('change', async () => {
-  await addPictures(pick.files);
+  const files = [...pick.files];
   pick.value = '';
+  await addPictures(files);
 });
 input.addEventListener('paste', event => {
   const files = [...(event.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'));
@@ -349,11 +362,14 @@ input.addEventListener('paste', event => {
   if (!event.clipboardData.getData('text/plain')) event.preventDefault();
   addPictures(files);
 });
-form.addEventListener('dragover', event => {
-  if ([...(event.dataTransfer?.types ?? [])].includes('Files')) event.preventDefault();
+// Anywhere on the page: a file dropped beside the box would otherwise open in
+// the tab, and the conversation with it would be gone from view.
+const carriesFiles = event => [...(event.dataTransfer?.types ?? [])].includes('Files');
+document.addEventListener('dragover', event => {
+  if (carriesFiles(event)) event.preventDefault();
 });
-form.addEventListener('drop', event => {
-  if (!event.dataTransfer?.files?.length) return;
+document.addEventListener('drop', event => {
+  if (!carriesFiles(event)) return;
   event.preventDefault();
   addPictures(event.dataTransfer.files);
 });
@@ -369,10 +385,11 @@ form.addEventListener('submit', async event => {
       location.hash = encodeURIComponent(id);
       open(id);
     }
-    const images = pictures.map(({ mimeType, data }) => ({ mimeType, data }));
-    await api(`/api/chats/${encodeURIComponent(current)}/say`, { method: 'POST', body: { text, images } });
-    input.value = '';
-    pictures = [];
+    const sending = [...pictures];
+    await api(`/api/chats/${encodeURIComponent(current)}/say`, { method: 'POST', body: { text, images: sending.map(({ mimeType, data }) => ({ mimeType, data })) } });
+    // Only what went: an image added or a word typed meanwhile stays.
+    if (input.value.trim() === text) input.value = '';
+    pictures = pictures.filter(p => !sending.includes(p));
     showPictures();
   } catch (err) {
     state.textContent = `Not sent: ${err.message}`;

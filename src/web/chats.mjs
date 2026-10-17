@@ -45,6 +45,12 @@ const IMAGE_MEMORY = 64 * 1024 * 1024;
 
 const badImage = message => Object.assign(new Error(message), { status: 400 });
 
+/** Whether base64 `data` is an image of `mimeType` by its first bytes. */
+function isImage(mimeType, data) {
+  return typeof mimeType === 'string' && Object.hasOwn(IMAGE_MAGIC, mimeType)
+    && typeof data === 'string' && IMAGE_MAGIC[mimeType](Buffer.from(data.slice(0, 64), 'base64'));
+}
+
 /**
  * The images a message carries, checked: at most MAX_IMAGES, each a JPEG,
  * PNG, GIF or WebP whose bytes say so, in base64, small enough for the
@@ -58,12 +64,12 @@ export function readImages(raw) {
   return raw.map((image, i) => {
     const which = `image ${i + 1}`;
     const { mimeType, data } = image ?? {};
-    if (!Object.hasOwn(IMAGE_MAGIC, mimeType)) throw badImage(`${which}: only JPEG, PNG, GIF and WebP are read`);
+    if (typeof mimeType !== 'string' || !Object.hasOwn(IMAGE_MAGIC, mimeType)) throw badImage(`${which}: only JPEG, PNG, GIF and WebP are read`);
     if (typeof data !== 'string' || data.length % 4 !== 0 || !BASE64.test(data)) throw badImage(`${which}: the data must be base64`);
     if (data.length > MAX_IMAGE_BASE64) throw badImage(`${which} is larger than the model takes (5 MB)`);
     total += data.length;
     if (total > MAX_IMAGES_BASE64) throw badImage('the images together are larger than one message can carry (12 MB)');
-    if (!IMAGE_MAGIC[mimeType](Buffer.from(data.slice(0, 64), 'base64'))) throw badImage(`${which} is not the ${mimeType.slice(6).toUpperCase()} it says it is`);
+    if (!isImage(mimeType, data)) throw badImage(`${which} is not the ${mimeType.slice(6).toUpperCase()} it says it is`);
     return { mimeType, data };
   });
 }
@@ -198,8 +204,9 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
         const role = u.sessionUpdate === 'user_message_chunk' ? 'user' : 'agent';
         if (u.content?.type === 'image') {
           // An image goose replays, or one an answer carries: kept for the
-          // page, with the message it belongs to.
-          if (!Object.hasOwn(IMAGE_MAGIC, u.content.mimeType) || typeof u.content.data !== 'string') return;
+          // page, with the message it belongs to, if it is one the page may
+          // show and no larger than one the browser could have sent.
+          if (!isImage(u.content.mimeType, u.content.data) || u.content.data.length > MAX_IMAGE_BASE64) return;
           const ref = keepImage(c, u.content.mimeType, u.content.data);
           if (last?.type === role && !last.closed) {
             (last.images ??= []).push(ref);

@@ -409,6 +409,7 @@ test('images: checked by their bytes, at most six, small enough for the model', 
   refused(Array(7).fill(png), /at most 6 images/);
   refused([{ mimeType: 'image/svg+xml', data: PNG }], /image 1: only JPEG, PNG, GIF and WebP/);
   refused([{ mimeType: 'toString', data: PNG }], /only JPEG/);
+  refused([{ mimeType: ['image/png'], data: PNG }], /only JPEG/);
   refused([null], /only JPEG/);
   refused([png, { mimeType: 'image/png', data: 'not base64!' }], /image 2: the data must be base64/);
   refused([{ mimeType: 'image/png', data: 'abc' }], /must be base64/);
@@ -474,11 +475,17 @@ test('images come back with the history, and an answer can carry one', async () 
   assert.equal(second.images.size, 0, 'a deleted conversation keeps no images');
 });
 
-test('an image goose sends in a type the page cannot show is left out', async () => {
+test('an image goose sends that the page cannot show, or that is not what it says, is left out', async () => {
   const goose = fakeGoose();
   const b = broker(goose);
   const { id } = await b.create();
-  goose.sessions.get(id).push({ role: 'user', text: '', blocks: [{ type: 'image', mimeType: 'image/svg+xml', data: PNG }, { type: 'text', text: 'and words' }] });
+  goose.sessions.get(id).push({ role: 'user', text: '', blocks: [
+    { type: 'image', mimeType: 'image/svg+xml', data: PNG },
+    { type: 'image', mimeType: 'image/jpeg', data: PNG },
+    { type: 'image', mimeType: ['image/png'], data: PNG },
+    { type: 'image', mimeType: 'image/png', data: PNG + 'A'.repeat(5 * 1024 * 1024) },
+    { type: 'text', text: 'and words' },
+  ] });
   b.chats.get(id).loaded = false;
   await b.open(id);
   assert.deepEqual(b.chats.get(id).events.map(e => [e.type, e.text, e.images]), [['user', 'and words', undefined]]);
