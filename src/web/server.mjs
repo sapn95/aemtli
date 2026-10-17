@@ -12,7 +12,8 @@ import { jobMeta } from '../run/meta.mjs';
 import { APPROVAL_ID } from '../gateway/approvals.mjs';
 import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
-import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage, connectionsPage } from './pages.mjs';
+import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage, connectionsPage, offlinePage, manifest } from './pages.mjs';
+import { iconPng } from './icon.mjs';
 import { readAccount, readLogin } from './approvals.mjs';
 import { runPrompt, QUESTION_CHARS } from './ask.mjs';
 import { readImages, MAX_IMAGES_BASE64 } from './chats.mjs';
@@ -25,6 +26,7 @@ const STATIC = {
   'chat.js': 'text/javascript',
   'connections.js': 'text/javascript',
   'copy.js': 'text/javascript',
+  'install.js': 'text/javascript',
   'fonts/schibsted-grotesk.woff2': 'font/woff2',
   'fonts/OFL.txt': 'text/plain',
 };
@@ -37,11 +39,13 @@ const SLOT_CAP = 100;
 /** Sends a complete response with the headers every page carries. */
 function send(res, status, type, body, extra = {}) {
   res.writeHead(status, {
-    'content-type': type.startsWith('font/') ? type : `${type}; charset=utf-8`,
+    'content-type': type.startsWith('font/') || type === 'image/png' ? type : `${type}; charset=utf-8`,
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
-    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    // manifest-src and worker-src are named although default-src covers
+    // them: the app's manifest and service worker are meant, nothing else.
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     ...extra,
   });
   res.end(body);
@@ -398,7 +402,6 @@ export function createApp(deps) {
     const path = url.pathname;
     if (req.method === 'GET' && path.startsWith('/static/')) {
       const file = path.slice('/static/'.length);
-      if (!Object.hasOwn(STATIC, file)) return send(res, 404, 'text/plain', 'not found');
       // The pages ask for ?v=<version>, so a new release is a new URL and the
       // old file can be cached for good; anything else for five minutes. A
       // script a page script imports (copy.js) comes without the version, and
@@ -406,7 +409,26 @@ export function createApp(deps) {
       // could miss what that script imports from it.
       const pinned = url.searchParams.get('v') === version;
       const unpinned = STATIC[file] === 'text/javascript' ? 'no-cache' : 'max-age=300';
-      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), { 'cache-control': pinned ? 'public, max-age=31536000, immutable' : unpinned });
+      const cache = { 'cache-control': pinned ? 'public, max-age=31536000, immutable' : unpinned };
+      // The app icons are drawn in code (icon.mjs), under a fixed list of names.
+      if (file.startsWith('icons/')) {
+        const png = iconPng(file.slice('icons/'.length));
+        return png ? send(res, 200, 'image/png', png, cache) : send(res, 404, 'text/plain', 'not found');
+      }
+      if (file === 'offline.html') return send(res, 200, 'text/html', offlinePage(version), cache);
+      if (!Object.hasOwn(STATIC, file)) return send(res, 404, 'text/plain', 'not found');
+      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), cache);
+    }
+    // What makes ämtli an app on a phone's home screen. Both sit behind
+    // Access like everything else; the page asks for the manifest with its
+    // cookie (crossorigin="use-credentials" in the layout).
+    if (req.method === 'GET' && path === '/manifest.webmanifest') {
+      return send(res, 200, 'application/manifest+json', JSON.stringify(manifest(version)));
+    }
+    // At the root, not under /static/: a worker's scope is the path it was
+    // served from. no-cache, so a release reaches the browser at once.
+    if (req.method === 'GET' && path === '/sw.js') {
+      return send(res, 200, 'text/javascript', `const VERSION = ${JSON.stringify(version)};\n${readFileSync(join(PUBLIC, 'sw.js'), 'utf8')}`, { 'cache-control': 'no-cache' });
     }
     if (req.method === 'GET' && path === '/') {
       const items = await collect();

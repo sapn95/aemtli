@@ -80,7 +80,10 @@ a:hover { text-decoration-thickness: 2px; }
 .top nav a[aria-current="page"] { color: var(--ink); box-shadow: inset 0 -2px var(--royal); }
 .who { margin-left: auto; color: var(--pencil); font-size: 0.875rem; }
 
-main { max-width: 68rem; margin: 0 auto; padding: 0.5rem 1.25rem 3rem; }
+/* A word longer than the line (a URL in a description, a model's name)
+   breaks rather than widening the page. break-word, not anywhere: it leaves
+   the widths a grid or a flex row works out alone. */
+main { max-width: 68rem; margin: 0 auto; padding: 0.5rem 1.25rem 3rem; overflow-wrap: break-word; }
 footer { max-width: 68rem; margin: 0 auto; padding: 1rem 1.25rem 2rem; color: var(--pencil); font-size: 0.8125rem; }
 
 h1 { font-size: 2rem; line-height: 1.15; font-weight: 750; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
@@ -238,12 +241,14 @@ a.mark:hover { text-decoration: underline; }
 .args div { display: contents; }
 .args dt { color: var(--pencil); }
 .args dd { margin: 0; overflow-wrap: anywhere; }
-.args pre, .result {
+/* .call-result, not .result: the run page's answer is a section.result, and
+   the two once shared this rule, which made a whole answer a 24rem box. */
+.args pre, .call-result {
   margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto;
   font: 0.8125rem/1.45 ui-monospace, "SF Mono", Menlo, monospace;
   background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 0.5rem 0.65rem;
 }
-.result { margin-top: 0.6rem; }
+.call-result { margin-top: 0.6rem; }
 /* A word to goose beside the decision: a line to write on, like the search,
    and the conversation it goes to next to it. */
 .say { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; margin-top: 0.75rem; }
@@ -328,6 +333,13 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 .md code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.875em; background: var(--royal-soft); padding: 0.05rem 0.3rem; border-radius: 4px; }
 .md pre { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 0.75rem 1rem; overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
+/* The page never scrolls sideways: running text breaks where it must, and
+   what cannot break (a code block, a table) scrolls inside its own box. */
+.md p, .md li, .md a, .md :not(pre) > code { overflow-wrap: anywhere; }
+.md pre, .md table { max-width: 100%; }
+/* A table keeps its words whole and scrolls instead: cells that may break
+   anywhere squeeze into columns of single letters. */
+.md th, .md td, .md th code, .md td code { overflow-wrap: normal; }
 .md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 0 0 1.25rem; font-size: 0.9375rem; }
 .md th, .md td { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
 .md th { font-weight: 700; border-bottom: 2px solid var(--ink); }
@@ -362,6 +374,8 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 /* The one action in the sidebar keeps its outline: plain text does not read
    as a button, and this is what a new reader looks for. */
 .chat-side #new { width: 100%; margin-bottom: 0.75rem; border-color: var(--royal); }
+/* The list's own button folds it away on a phone; a wide screen has room. */
+#toggle-list { display: none; }
 .chats-list { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
 .chat-item { display: flex; flex-direction: column; padding: 0.45rem 0.5rem; border-radius: 5px; color: var(--ink); text-decoration: none; }
 .chat-item:hover { background: var(--royal-soft); }
@@ -457,6 +471,20 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
 
 .empty { margin-top: 2rem; max-width: 40rem; }
 
+/* ---- installed on a phone ------------------------------------------------- */
+
+/* With viewport-fit=cover the page runs under a notch or the rounded corners
+   of a landscape phone; these keep the text out of them. */
+body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.reload { display: none; }
+/* Started from the home screen there is no browser around the page: no
+   reload button, and the status bar lies over the top of the page. */
+@media (display-mode: standalone) {
+  .reload { display: inline-flex; }
+  .top { padding-top: calc(1.25rem + env(safe-area-inset-top)); }
+  footer { padding-bottom: calc(2rem + env(safe-area-inset-bottom)); }
+}
+
 /* ---- small screens -------------------------------------------------------- */
 
 /* Without a wide page there is no margin to hang the star in: it sits
@@ -504,19 +532,45 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
   .runs .took, .runs .trigger { display: none; }
   h2 { margin-top: 1.75rem; }
   .lede { font-size: 1rem; }
-  /* The chat: the controls on one line, and a log that leaves room for the
-     keyboard instead of a tall empty box. */
+  /* Only the page scrolls on a phone: a box that scrolls inside a page that
+     scrolls is two scrolls under one thumb. */
+  .args pre, .call-result, .log pre, .chats-list { max-height: none; overflow: visible; }
+
+  /* The chat: the list folds away behind its button, the conversation flows
+     in the page, and the box to write in stays at the bottom of the screen. */
   .chat-page { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
   .chat-side { border-right: 0; border-bottom: 1px solid var(--rule); padding: 0 0 0.75rem; }
-  .chats-list { max-height: 8.5rem; }
+  .side-top { display: flex; gap: 0.5rem; }
+  .chat-side #new { width: auto; flex: 1; margin-bottom: 0; }
+  #toggle-list { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+  #toggle-list::after { content: "▾"; }
+  #toggle-list[aria-expanded="false"]::after { content: "▸"; }
+  .chat-side.collapsed .chat-list-box { display: none; }
+  .chat-list-box { margin-top: 0.5rem; }
+  /* The two icons get a finger's width each. They stand at the end of the
+     second line and reach up beside the title, which stops short of them. */
+  .chat-item { padding-right: 6.25rem; }
+  .chat-tools { right: 0; bottom: 0; }
+  .icon-button { width: 44px; height: 44px; justify-content: center; align-items: center; }
   .chat-bar { gap: 0.5rem 0.75rem; }
   .chat-bar h1 { flex-basis: 100%; }
   .chat-bar label { flex: 1; }
   .chat-bar select { flex: 1; min-width: 0; }
   #new { padding: 0.35rem 0.7rem; font-size: 0.875rem; border-width: 1px; }
-  .chat { min-height: 32vh; max-height: 46vh; padding: 0.75rem; }
-  .composer { flex-direction: column; align-items: stretch; }
+  .chat { min-height: 0; max-height: none; overflow: visible; padding: 0.75rem; }
+  .composer {
+    flex-direction: column; align-items: stretch;
+    position: sticky; bottom: 0; z-index: 2; background: var(--paper);
+    margin-top: 0.5rem; padding: 0.6rem 0 calc(0.6rem + env(safe-area-inset-bottom));
+  }
   .composer-actions { flex-direction: row; }
+  /* Below 16 px Safari zooms into a field as it is tapped. */
+  input, select, textarea, .find input, .say-text, .chip { font-size: max(16px, 1rem); }
+  /* About 44 px to tap, the size of a fingertip. The star keeps its size on
+     the page and takes the taps around it. */
+  .top nav a { display: inline-flex; align-items: center; min-height: 44px; }
+  .fav::after { content: ""; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  button.run, .decide button, .reload { min-height: 44px; }
   .args { grid-template-columns: minmax(0, 1fr); }
   .args dt { margin-top: 0.3rem; }
   .facts { gap: 0.5rem 1.5rem; }

@@ -13,6 +13,9 @@
 // from the server by id, never from the stream.
 
 import { addCopyButtons } from './copy.js';
+import { registerServiceWorker } from './install.js';
+
+registerServiceWorker();
 
 const list = document.getElementById('chats');
 const log = document.getElementById('log');
@@ -30,6 +33,8 @@ const heading = document.getElementById('chat-title');
 const pick = document.getElementById('pick');
 const attach = document.getElementById('attach');
 const attached = document.getElementById('attached');
+const side = document.querySelector('.chat-side');
+const toggleList = document.getElementById('toggle-list');
 
 let current = null;
 let stream = null;
@@ -99,6 +104,33 @@ function iconButton(name, label, onClick) {
   return button;
 }
 
+/**
+ * On a phone the list folds away behind its button (app.css hides the
+ * button on wide screens, where the list always shows): closed while a
+ * conversation is open, open when none is.
+ */
+function showList(open) {
+  side.classList.toggle('collapsed', !open);
+  toggleList.setAttribute('aria-expanded', String(open));
+}
+
+/**
+ * Whether the log scrolls in its own box, as on a wide screen, or flows in
+ * the page with the box to write in held at the bottom, as on a phone.
+ */
+const logScrolls = () => ['auto', 'scroll'].includes(window.getComputedStyle(log).overflowY);
+
+/** Whether the reader is at the end of the conversation, give or take a few lines. */
+function atEnd() {
+  if (logScrolls()) return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  return log.getBoundingClientRect().bottom - form.getBoundingClientRect().top < 120;
+}
+
+function toEnd() {
+  if (logScrolls()) log.scrollTop = log.scrollHeight;
+  else document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+}
+
 /** The two buttons that act on the conversation that is open. */
 function showActions(title) {
   archiveButton.disabled = !current;
@@ -120,6 +152,7 @@ async function refreshList() {
   away = new Set(chats.filter(c => c.archived).map(c => c.id));
   showArchived.parentElement.hidden = !away.size;
   showArchived.parentElement.lastChild.textContent = away.size === 1 ? ' Show 1 archived' : ` Show ${away.size} archived`;
+  toggleList.textContent = `Conversations (${chats.length - away.size})`;
   const open = chats.find(c => c.id === current);
   showActions(open?.title);
   adoptIdle(open, asked);
@@ -266,7 +299,6 @@ function adoptIdle(listed, asked) {
 function drawAll(question) {
   log.replaceChildren(...events.map(render));
   showStatus(status, question);
-  log.scrollTop = log.scrollHeight;
 }
 
 /** Opens one conversation and follows it. */
@@ -278,6 +310,10 @@ function open(id) {
   log.replaceChildren();
   mode.disabled = !id;
   showActions();
+  showList(!id);
+  // The first drawing shows the end; a later one, after a reconnect, only
+  // if the reader was there.
+  let first = true;
   if (!id) {
     heading.textContent = 'Chat with goose';
     state.textContent = 'Pick a conversation or start one.';
@@ -288,26 +324,31 @@ function open(id) {
   stream = new EventSource(`/api/chats/${encodeURIComponent(id)}/events`);
   stream.onmessage = message => {
     const m = JSON.parse(message.data);
+    // Measured before anything changes: someone reading further up stays there.
+    const stick = first || atEnd();
     if (m.kind === 'snapshot') {
+      first = false;
       events = m.events;
       status = m.status;
       if (m.mode) mode.value = m.mode;
       heading.textContent = m.title || 'Chat with goose';
       drawAll(m.question);
+      if (stick) toEnd();
     } else if (m.kind === 'event') {
       events.push(m.event);
       log.append(render(m.event, events.length - 1));
-      log.scrollTop = log.scrollHeight;
+      if (stick) toEnd();
     } else if (m.kind === 'append') {
       events[m.index].text += m.text;
       const el = log.querySelector(`[data-index="${m.index}"]`);
       // An answer already drawn from Markdown waits for its next drawing;
       // one that is not shows its text as it grows.
       if (el && !el.classList.contains('md')) el.firstChild.nodeValue = events[m.index].text;
-      log.scrollTop = log.scrollHeight;
+      if (stick) toEnd();
     } else if (m.kind === 'replace') {
       events[m.index] = m.event;
       log.querySelector(`[data-index="${m.index}"]`)?.replaceWith(render(m.event, m.index));
+      if (stick) toEnd();
     } else if (m.kind === 'status') {
       showStatus(m.status, m.question);
       if (m.status === 'idle') refreshList();
@@ -515,6 +556,7 @@ deleteButton.addEventListener('click', () => {
 });
 
 showArchived.addEventListener('change', refreshList);
+toggleList.addEventListener('click', () => showList(side.classList.contains('collapsed')));
 
 window.addEventListener('hashchange', () => {
   const id = decodeURIComponent(location.hash.slice(1));

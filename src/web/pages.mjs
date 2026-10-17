@@ -54,10 +54,18 @@ export function layout({ title, user, version, body, script, active }) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f5f7f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f2b27" media="(prefers-color-scheme: dark)">
 <title>${esc(title)} – ämtli</title>
 <link rel="icon" href="/static/icon.svg?v=${esc(version)}" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png?v=${esc(version)}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ämtli">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preload" href="/static/fonts/schibsted-grotesk.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/app.css?v=${esc(version)}">
 </head>
@@ -72,6 +80,51 @@ ${body}
 </main>
 <footer>ämtli ${esc(version)}, goose recipes on a schedule</footer>
 ${script ? `<script type="module" src="/static/${esc(script)}?v=${esc(version)}"></script>` : ''}
+</body>
+</html>`;
+}
+
+/**
+ * The web app manifest. Behind Access like every page, which is why the
+ * layout links it with its cookie. The colours are the paper and the royal
+ * blue of app.css; the maskable icon keeps its tick inside the safe zone.
+ */
+export function manifest(version) {
+  const icon = (name, size, purpose) => ({ src: `/static/icons/${name}?v=${encodeURIComponent(version)}`, sizes: `${size}x${size}`, type: 'image/png', purpose });
+  return {
+    id: '/',
+    name: 'ämtli',
+    short_name: 'ämtli',
+    description: 'Chores goose does on a schedule, and a chat with it.',
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    background_color: '#f5f7f8',
+    theme_color: '#2b4fd8',
+    icons: [icon('icon-192.png', 192, 'any'), icon('icon-512.png', 512, 'any'), icon('icon-maskable-512.png', 512, 'maskable')],
+  };
+}
+
+/**
+ * What the service worker shows when a page cannot be fetched. It holds
+ * nothing personal, so the worker may keep it; the stylesheet is the one it
+ * keeps along with it.
+ */
+export function offlinePage(version) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>No connection – ämtli</title>
+<link rel="stylesheet" href="/static/app.css?v=${esc(version)}">
+</head>
+<body>
+<header class="top"><a class="wordmark" href="/">ämtli</a></header>
+<main><section class="empty"><h1>No connection</h1>
+<p>ämtli cannot be reached from here just now. Nothing is lost: the chores run on their schedule either way, and goose goes on with what it was asked.</p>
+<p><a href="/">Try again</a></p></section></main>
 </body>
 </html>`;
 }
@@ -169,6 +222,11 @@ function chore(it, now, timeZone) {
 </li>`;
 }
 
+// An app on the home screen has no reload button of its own, and a run
+// started here shows its outcome only on a fresh page. app.css shows this
+// one only there (display-mode: standalone).
+const RELOAD = '<button type="button" class="reload quiet-button">Reload</button>';
+
 /** The Ämtliplan: every chore with its schedule and this week. */
 function plan(items, week, now, timeZone) {
   // Favourites first, then by when they run next.
@@ -180,6 +238,7 @@ function plan(items, week, now, timeZone) {
   <div class="find" role="search">
     <input type="search" id="find" placeholder="Search ${items.length} chores" aria-label="Search chores" autocomplete="off" spellcheck="false">
     <button type="button" id="only-fav" class="chip" aria-pressed="false"><span aria-hidden="true">★</span> Favourites</button>
+    ${RELOAD}
   </div>
 </div>
 ${weekHead(week, timeZone)}
@@ -283,7 +342,7 @@ export function approvalsPage({ items, unreachable }, configured, timeZone, chat
   const rows = items.slice(0, 100).map(r => `<li class="${r.status === 'pending' ? 'request' : 'decided'}">
   <p class="ask"><span class="gw">${esc(r.gatewayTitle)}</span> <strong>${esc(toolWords(r.tool, r.gateway))}</strong> <code class="tool">${visible(r.tool)}</code> <span class="status ${esc(REQUEST_CLASS[r.status] ?? 'none')}">${esc(REQUEST_WORDS[r.status] ?? r.status)}</span></p>
   <p class="asked">Asked ${esc(when(r.requestedAt, timeZone))}${r.decidedAt ? `, decided ${esc(when(r.decidedAt, timeZone))}` : ''}</p>
-  <details><summary>What it asked for${r.result ? ' and what came back' : ''}</summary>${argList(r.arguments)}${r.result ? `<pre class="result">${esc(r.result)}</pre>` : ''}</details>
+  <details><summary>What it asked for${r.result ? ' and what came back' : ''}</summary>${argList(r.arguments)}${r.result ? `<pre class="call-result">${esc(r.result)}</pre>` : ''}</details>
   ${r.status === 'pending' ? `${sayBox(chat, r.gateway, r.id)}<div class="decide"><button class="approve" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Approve</button><button class="reject quiet-button" data-gateway="${esc(r.gateway)}" data-id="${esc(r.id)}">Reject</button></div><p class="outcome" role="status"></p>` : ''}
 </li>`).join('\n');
   return `<section class="approvals">
@@ -314,7 +373,7 @@ export function recipePage(item, runs, timeZone) {
   <div><dt>When</dt><dd title="${esc(item.schedule)}">${esc(item.suspended ? 'Paused, runs only by hand' : item.scheduleText)}</dd></div>
   <div><dt>Next</dt><dd>${esc(item.suspended || !item.nextRun ? 'Not scheduled' : when(item.nextRun, timeZone))}</dd></div>
 </dl>
-<p><button class="run" data-recipe="${esc(item.name)}"${item.running ? ' disabled' : ''}>Run now</button></p>
+<p class="run-row"><button class="run" data-recipe="${esc(item.name)}"${item.running ? ' disabled' : ''}>Run now</button>${RELOAD}</p>
 <p id="notice" class="notice" role="status"></p>
 <h2>Runs</h2>
 ${runs.length ? `<ul class="runs">${rows}</ul>` : '<p class="quiet">It has not run yet. Run it now to see what it does.</p>'}
@@ -376,9 +435,14 @@ export function chatPage(on = true) {
   }
   return `<section class="chat-page">
 <aside class="chat-side" aria-label="Conversations">
-  <button type="button" id="new" class="quiet-button">New conversation</button>
-  <ul id="chats" class="chats-list"></ul>
-  <label class="show-archived"><input type="checkbox" id="show-archived"> Show archived</label>
+  <div class="side-top">
+    <button type="button" id="new" class="quiet-button">New conversation</button>
+    <button type="button" id="toggle-list" class="quiet-button" aria-expanded="true" aria-controls="chat-list-box">Conversations</button>
+  </div>
+  <div id="chat-list-box" class="chat-list-box">
+    <ul id="chats" class="chats-list"></ul>
+    <label class="show-archived"><input type="checkbox" id="show-archived"> Show archived</label>
+  </div>
 </aside>
 <div class="chat-main">
   <div class="chat-bar">
@@ -399,7 +463,7 @@ export function chatPage(on = true) {
   <div id="attached" class="attached" aria-label="Images to send" hidden></div>
   <form id="form" class="composer">
     <label class="visually-hidden" for="input">Message</label>
-    <textarea id="input" rows="3" placeholder="Ask goose something, or add an image (paste or drop it here). Cmd+Enter sends. It keeps working when you close the page."></textarea>
+    <textarea id="input" rows="3" placeholder="Ask goose something, or paste or drop an image here. Cmd+Enter sends."></textarea>
     <input type="file" id="pick" accept="image/*" multiple hidden>
     <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="attach" class="quiet-button">Image</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
   </form>

@@ -187,7 +187,7 @@ test('the UI shows held calls with their arguments escaped, and decides them sam
 
       const history = await (await fetch(`${base}/approvals`)).text();
       assert.match(history, /<span class="status succeeded">Done<\/span>/);
-      assert.match(history, /<pre class="result">send_thing/);
+      assert.match(history, /<pre class="call-result">send_thing/);
       assert.doesNotMatch(await (await fetch(`${base}/`)).text(), /Needs you/, 'nothing left to decide');
     } finally {
       server.close();
