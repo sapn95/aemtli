@@ -11,7 +11,7 @@ const AT = NOW.getTime() / 1000;
 const decode = part => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
 
 /** GitHub's App endpoints behind a fetch, with every call written down. */
-function fakeGitHub({ installations = [{ id: 7, account: { login: 'sapn95' } }], fail = {} } = {}) {
+function fakeGitHub({ installations = [{ id: 7, account: { login: 'sapn95' } }], fail = {}, answerToken } = {}) {
   const seen = [];
   let issued = 0;
   const fetchImpl = async (url, init) => {
@@ -21,6 +21,7 @@ function fakeGitHub({ installations = [{ id: 7, account: { login: 'sapn95' } }],
     if (fail[pathname]) return answer(fail[pathname], { message: 'Bad credentials' });
     if (pathname === '/app/installations') return answer(200, installations);
     if (pathname === '/app/installations/7/access_tokens') {
+      if (answerToken) return answer(201, answerToken);
       issued += 1;
       return answer(201, { token: `ghs_${issued}`, expires_at: new Date(seen.clock + 3600_000).toISOString() });
     }
@@ -75,4 +76,27 @@ test('an App that is not installed on the owner, and GitHub saying no, are told'
   await assert.rejects(createAppAuth({ appId: 1, privateKey: PEM, owner: 'sapn95', fetchImpl: none.fetchImpl })(), /not installed on sapn95/);
   const refused = fakeGitHub({ fail: { '/app/installations': 401 } });
   await assert.rejects(createAppAuth({ appId: 1, privateKey: PEM, owner: 'sapn95', fetchImpl: refused.fetchImpl })(), err => err.status === 401 && /GitHub answered 401: Bad credentials/.test(err.message));
+});
+
+test('an App installed again is looked up again, once', async () => {
+  const gh = fakeGitHub({ installations: [{ id: 3, account: { login: 'sapn95' } }] });
+  const token = createAppAuth({ appId: 1, privateKey: PEM, owner: 'sapn95', fetchImpl: gh.fetchImpl, now: () => NOW });
+  // The first lookup finds the old id; GitHub then says it is gone.
+  await assert.rejects(token(), err => err.status === 404);
+  assert.deepEqual(gh.seen.map(s => `${s.method} ${s.path}`), [
+    'GET /app/installations', 'POST /app/installations/3/access_tokens',
+    'GET /app/installations', 'POST /app/installations/3/access_tokens',
+  ], 'one retry, and no loop');
+});
+
+test('an answer without a token is an error, never a token of "undefined"', async () => {
+  const gh = fakeGitHub({ answerToken: { expires_at: 'soon' } });
+  await assert.rejects(createAppAuth({ appId: 1, privateKey: PEM, owner: 'sapn95', fetchImpl: gh.fetchImpl, now: () => NOW })(), /without a token/);
+});
+
+test('what GitHub refuses comes back without the JWT or the key', async () => {
+  const gh = fakeGitHub({ fail: { '/app/installations/7/access_tokens': 403 } });
+  const err = await createAppAuth({ appId: 1, privateKey: PEM, owner: 'sapn95', fetchImpl: gh.fetchImpl, now: () => NOW })().catch(e => e);
+  assert.match(err.message, /GitHub answered 403/);
+  assert.doesNotMatch(err.message, /eyJ|BEGIN/);
 });

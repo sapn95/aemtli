@@ -300,10 +300,14 @@ The code checks these whatever the policy says:
 
 - A merge names the head commit the owner saw. If the branch has moved since,
   nothing is merged.
-- Every check on that commit is green, and at least one ran. This also covers
-  the repositories without branch protection.
-- A pull request that changes `.github/workflows` is refused. The App may not
-  write workflows, so those are merged in the browser.
+- GitHub has to call the pull request clean: not behind its base, no
+  conflict. A rebase lands new commits, and this keeps them what the checks
+  saw.
+- Every check on that commit is green, at least one passed, and every one was
+  read. This also covers the repositories without branch protection.
+- A pull request from a fork, or one that changes anything under `.github`
+  (the workflows, the actions they run, Dependabot's settings), is merged in
+  the browser. The App may not write workflows anyway.
 - A release tags a commit the default branch already holds, with green checks,
   under a tag that does not exist yet, and matching `package.json` if there is
   one. The tag starts the repository's own release workflow. Bump the version

@@ -15,6 +15,7 @@ function fakeGitHub({
   files = [{ filename: 'src/a.mjs' }],
   runs = { [HEAD]: OK, [MAIN]: OK },
   statuses = {},
+  totals = {},
   repo = {},
   tags = [],
   pkg = { [MAIN]: { version: '1.4.0' } },
@@ -49,7 +50,7 @@ function fakeGitHub({
     if (pathname === `${r}/pulls/5/merge`) return answer(200, { merged: true, sha: 'd'.repeat(40), message: 'Pull Request successfully merged' });
     const commit = /^\/repos\/sapn95\/aemtli\/commits\/(\w+)\/(check-runs|status)$/.exec(pathname);
     if (commit && commit[2] === 'check-runs') return page(runs[commit[1]] ?? [], 'check_runs');
-    if (commit) return answer(200, { statuses: statuses[commit[1]] ?? [] });
+    if (commit) return answer(200, { total_count: totals[commit[1]] ?? (statuses[commit[1]] ?? []).length, statuses: statuses[commit[1]] ?? [] });
     if (pathname === r) return answer(200, info);
     if (pathname.startsWith(`${r}/git/ref/tags/`)) return tags.includes(decodeURIComponent(pathname.split('/').pop())) ? answer(200, { ref: 'x' }) : answer(404, { message: 'Not Found' });
     const cmp = /^\/repos\/sapn95\/aemtli\/compare\/main\.\.\.(\w+)$/.exec(pathname);
@@ -57,7 +58,8 @@ function fakeGitHub({
     if (pathname === `${r}/contents/package.json`) {
       const got = pkg[searchParams.get('ref')];
       if (got === undefined) return answer(404, { message: 'Not Found' });
-      return answer(200, { content: Buffer.from(typeof got === 'string' ? got : JSON.stringify(got)).toString('base64') });
+      if (got === null) return answer(200, { content: '', encoding: 'none' });
+      return answer(200, { encoding: 'base64', content: Buffer.from(typeof got === 'string' ? got : JSON.stringify(got)).toString('base64') });
     }
     if (pathname === `${r}/git/tags` && init.method === 'POST') {
       created.push(body);
@@ -89,6 +91,7 @@ test('a release tag is v and SemVer, as the release workflows match it', () => {
 test('what the checks say: check runs and statuses both count, and nothing reported is not green', () => {
   assert.deepEqual(judgeChecks(OK, [{ context: 'sonar', state: 'success' }]), { state: 'green', ran: 3, red: [], pending: [] });
   assert.equal(judgeChecks([], []).state, 'none');
+  assert.deepEqual(judgeChecks([{ name: 'ci', status: 'completed', conclusion: 'skipped' }], []), { state: 'none', ran: 1, red: [], pending: [] }, 'skipped alone tested nothing');
   assert.deepEqual(judgeChecks([{ name: 'ci', status: 'in_progress' }], [{ context: 'cr', state: 'pending' }]).pending, ['ci', 'cr']);
   const red = judgeChecks([{ name: 'ci', status: 'completed', conclusion: 'failure' }, { name: 'x', status: 'queued' }], [{ context: 'cr', state: 'error' }]);
   assert.equal(red.state, 'red', 'a failure outweighs one still running');
@@ -128,9 +131,12 @@ test('one pull request: its head, its files, a renamed workflow, a fork, and its
   const gh = fakeGitHub({ files: [{ filename: 'docs/ci.md', previous_filename: '.github/workflows/ci.yml' }], pr: { head: { ref: 'f', sha: HEAD, repo: { full_name: 'someone/aemtli' } } } });
   const pr = await gh.github.pull({ repo: 'aemtli', number: 5 });
   assert.equal(pr.sha, HEAD);
-  assert.equal(pr.touchesWorkflows, true, 'moving a workflow away changes it too');
+  assert.equal(pr.touchesCi, true, 'moving a workflow away changes it too');
   assert.equal(pr.fork, true);
   assert.equal(pr.checks.state, 'green');
+  assert.equal(pr.checks.complete, true);
+  const gone = fakeGitHub({ pr: { head: { ref: 'f', sha: HEAD, repo: null } } });
+  assert.equal((await gone.github.pull({ repo: 'aemtli', number: 5 })).fork, true, 'a deleted fork is still a fork');
   assert.deepEqual(pr.files, ['docs/ci.md']);
   await assert.rejects(gh.github.pull({ repo: 'aemtli', number: '5' }), err => err.status === 400 && /not a pull request number/.test(err.message));
 });
@@ -158,7 +164,16 @@ test('what stops a merge before GitHub is asked to merge', async () => {
   await refused({ pr: { state: 'closed', merged: true } }, {}, /#5 is merged/);
   await refused({ pr: { state: 'closed' } }, {}, /#5 is closed/);
   await refused({ pr: { base: { ref: 'homelab', repo: { default_branch: 'main' } } } }, {}, /goes into homelab, not into main/);
-  await refused({ files: [{ filename: '.github/workflows/release.yml' }] }, {}, /changes \.github\/workflows/);
+  await refused({ pr: { head: { ref: 'f', sha: HEAD, repo: { full_name: 'someone/aemtli' } } } }, {}, /comes from a fork/);
+  for (const filename of ['.github/workflows/release.yml', '.github/actions/setup/action.yml', '.github/dependabot.yml']) {
+    await refused({ files: [{ filename }] }, {}, /changes \.github\/, where CI and its actions live/);
+  }
+  await refused({ pr: { mergeable_state: 'behind' } }, {}, /not clean to merge \(GitHub says behind\)/);
+  await refused({ pr: { mergeable: null, mergeable_state: 'unknown' } }, {}, /GitHub says unknown/);
+  await refused({ pr: { mergeable: false, mergeable_state: 'dirty' } }, {}, /GitHub says dirty/);
+  await refused({ runs: { [HEAD]: [{ name: 'ci', status: 'completed', conclusion: 'skipped' }] } }, {}, /no check on a+ passed: every one was skipped/);
+  await refused({ runs: { [HEAD]: Array.from({ length: 500 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) } }, {}, /more checks reported on a+ than can be read/);
+  await refused({ statuses: { [HEAD]: [{ context: 'a', state: 'success' }] }, totals: { [HEAD]: 140 } }, {}, /more checks reported/);
   await refused({ files: Array.from({ length: 501 }, (_, i) => ({ filename: `f${i}` })) }, {}, /more files than can be read/);
   await refused({ runs: { [HEAD]: [{ name: 'ci', status: 'completed', conclusion: 'failure' }] } }, {}, /checks on a+ failed: ci \(failure\)/);
   await refused({ runs: { [HEAD]: [{ name: 'ci', status: 'in_progress' }] } }, {}, /still running: ci/);
@@ -194,6 +209,7 @@ test('what stops a release before a tag is made', async () => {
   await refused({ pkg: { [HEAD]: { version: '1.4.0' } } }, { sha: HEAD }, /is not on main/);
   await refused({}, { tag: 'v1.5.0' }, /says 1\.4\.0, not 1\.5\.0/);
   await refused({ pkg: { [MAIN]: '{ not json' } }, {}, /does not parse/);
+  await refused({ pkg: { [MAIN]: null } }, {}, /package\.json at b+ cannot be read here/);
   await refused({ runs: { [MAIN]: [{ name: 'ci', status: 'completed', conclusion: 'cancelled' }] } }, {}, /ci \(cancelled\)/);
   await refused({ fail: { '/repos/sapn95/aemtli/contents/package.json': 500 } }, {}, /GitHub answered 500: Nope/);
 });

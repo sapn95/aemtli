@@ -91,9 +91,20 @@ export function createAppAuth({ appId, privateKey, owner, api = 'https://api.git
     const cacheKey = JSON.stringify(asked);
     const kept = tokens.get(cacheKey);
     if (kept && kept.until - now().getTime() > RENEW_BEFORE) return kept.token;
-    const id = await installationId();
-    const got = await call('POST', `/app/installations/${id}/access_tokens`, appJwt({ appId, key, now }), Object.keys(asked).length ? asked : undefined);
-    tokens.set(cacheKey, { token: got.token, until: Date.parse(got.expires_at) });
+    const buy = async () => call('POST', `/app/installations/${await installationId()}/access_tokens`, appJwt({ appId, key, now }), Object.keys(asked).length ? asked : undefined);
+    let got;
+    try {
+      got = await buy();
+    } catch (err) {
+      // An App installed again has a new installation id: look it up once
+      // more rather than fail until the pod restarts.
+      if (err.status !== 404) throw err;
+      installation = null;
+      got = await buy();
+    }
+    const until = Date.parse(got?.expires_at);
+    if (typeof got?.token !== 'string' || !got.token || !Number.isFinite(until)) throw new Error('GitHub answered without a token');
+    tokens.set(cacheKey, { token: got.token, until });
     return got.token;
   };
 }
