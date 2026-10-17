@@ -4,6 +4,10 @@
 // again every ten seconds until the login is there or the code has run out.
 // Everything the gateways say is set with textContent only.
 
+import { registerServiceWorker } from './install.js';
+
+registerServiceWorker();
+
 const POLL_MS = 10_000;
 // As long as Microsoft keeps a device code, and as long as the gateway keeps
 // the process that waits for it.

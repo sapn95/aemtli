@@ -32,6 +32,15 @@ export default [
     },
   },
   {
+    // The service worker: its own globals, and VERSION, which the server puts
+    // in front of the file when it serves it.
+    files: ['public/sw.js'],
+    languageOptions: {
+      sourceType: 'script',
+      globals: { self: 'readonly', caches: 'readonly', fetch: 'readonly', Response: 'readonly', URL: 'readonly', VERSION: 'readonly' },
+    },
+  },
+  {
     // Fakes implement async interfaces without needing to await anything.
     files: ['test/**/*.mjs'],
     rules: { 'require-await': 'off' },

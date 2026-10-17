@@ -54,13 +54,12 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
   const lines = [];
   const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, chats, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
   const port = server.address().port;
-  /** One request; `token` null means no Access header. */
-  const call = (path, { method = 'GET', token = 'good', headers = {} } = {}) => new Promise((resolve, reject) => {
+  /** One request; `token` null means no Access header, `raw` keeps the body as bytes. */
+  const call = (path, { method = 'GET', token = 'good', headers = {}, raw = false } = {}) => new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path, method, headers: { ...(token ? { 'cf-access-jwt-assertion': token } : {}), ...headers } }, res => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', c => { data += c; });
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+      const parts = [];
+      res.on('data', c => { parts.push(c); });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: raw ? Buffer.concat(parts) : Buffer.concat(parts).toString('utf8') }));
     });
     req.on('upgrade', (res, socket) => { socket.destroy(); resolve({ status: 101 }); });
     req.on('error', reject);
@@ -529,3 +528,76 @@ test('without a state directory a conversation cannot be put away', async () => 
   }, { chats, stateDir: false });
   chats.close();
 });
+
+test('ämtli installs as an app: manifest, icons and service worker, all behind Access', () =>
+  withUi(async ({ call }) => {
+    const page = (await call('/')).body;
+    assert.match(page, /<link rel="manifest" href="\/manifest\.webmanifest" crossorigin="use-credentials">/, 'with the Access cookie, or Access answers for it');
+    assert.match(page, /<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">/);
+    assert.match(page, /<meta name="theme-color" content="#f5f7f8" media="\(prefers-color-scheme: light\)">/);
+    assert.match(page, /<meta name="theme-color" content="#1f2b27" media="\(prefers-color-scheme: dark\)">/);
+    assert.match(page, /<link rel="apple-touch-icon" href="\/static\/icons\/apple-touch-icon\.png\?v=0\.0\.0-test">/);
+    for (const meta of ['apple-mobile-web-app-capable" content="yes', 'mobile-web-app-capable" content="yes', 'apple-mobile-web-app-title" content="ämtli', 'apple-mobile-web-app-status-bar-style" content="black-translucent']) {
+      assert.ok(page.includes(`<meta name="${meta}">`), meta);
+    }
+    const csp = (await call('/')).headers['content-security-policy'];
+    assert.match(csp, /manifest-src 'self'/);
+    assert.match(csp, /worker-src 'self'/);
+    assert.match(csp, /script-src 'self';/, 'and nothing loosened');
+
+    const res = await call('/manifest.webmanifest');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers['content-type'], 'application/manifest+json; charset=utf-8');
+    const manifest = JSON.parse(res.body);
+    assert.deepEqual([manifest.name, manifest.short_name, manifest.id, manifest.start_url, manifest.scope, manifest.display], ['ämtli', 'ämtli', '/', '/', '/', 'standalone']);
+    assert.deepEqual([manifest.background_color, manifest.theme_color], ['#f5f7f8', '#2b4fd8']);
+    assert.deepEqual(manifest.icons.map(i => `${i.sizes} ${i.purpose}`), ['192x192 any', '512x512 any', '512x512 maskable']);
+    for (const icon of [...manifest.icons, { src: '/static/icons/apple-touch-icon.png?v=0.0.0-test', sizes: '180x180' }]) {
+      const png = await call(icon.src, { raw: true });
+      assert.equal(png.status, 200, icon.src);
+      assert.equal(png.headers['content-type'], 'image/png');
+      assert.match(png.headers['cache-control'], /immutable/, 'versioned, so kept for good');
+      assert.deepEqual([...png.body.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      assert.equal(png.body.subarray(12, 16).toString('ascii'), 'IHDR');
+      const side = Number(icon.sizes.split('x')[0]);
+      assert.deepEqual([png.body.readUInt32BE(16), png.body.readUInt32BE(20)], [side, side], icon.src);
+    }
+    assert.equal((await call('/static/icons/icon-64.png')).status, 404, 'only the icons listed');
+    assert.equal((await call('/static/icons/..%2fapp.css')).status, 404);
+
+    const sw = await call('/sw.js');
+    assert.equal(sw.status, 200);
+    assert.equal(sw.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.equal(sw.headers['cache-control'], 'no-cache');
+    assert.match(sw.body, /^const VERSION = "0\.0\.0-test";\n/, 'a release is a new worker');
+    assert.match(sw.body, /url\.pathname\.startsWith\('\/api\/'\)\) return;/, 'it leaves the API alone');
+    const offline = await call('/static/offline.html?v=0.0.0-test');
+    assert.equal(offline.status, 200);
+    assert.match(offline.body, /<h1>No connection<\/h1>/);
+    assert.match(offline.body, /href="\/static\/app\.css\?v=0\.0\.0-test"/, 'with the stylesheet the worker keeps');
+    assert.equal((await call('/static/install.js')).status, 200);
+
+    for (const path of ['/manifest.webmanifest', '/static/icons/icon-192.png', '/static/icons/apple-touch-icon.png', '/sw.js', '/static/offline.html']) {
+      assert.equal((await call(path, { token: null })).status, 403, `${path} stays behind Access`);
+    }
+  }));
+
+test('in the app on a phone the dashboard and a chore have a reload button, and only there', () =>
+  withUi(async ({ call }) => {
+    assert.match((await call('/')).body, /<button type="button" class="reload quiet-button">Reload<\/button>/);
+    assert.match((await call('/recipes/hello')).body, /<button type="button" class="reload quiet-button">Reload<\/button>/);
+    assert.doesNotMatch((await call(`/recipes/hello/runs/${RUN_ID}`)).body, /class="reload/);
+    assert.doesNotMatch((await call('/approvals')).body, /class="reload/);
+    const css = (await call('/static/app.css')).body;
+    assert.match(css, /\.reload \{ display: none; \}/);
+    assert.match(css, /@media \(display-mode: standalone\) \{\n {2}\.reload \{ display: inline-flex; \}/);
+  }));
+
+test('a run\'s answer is not the result of a held call: no class shared, no box of its own', () =>
+  withUi(async ({ call }) => {
+    const run = (await call(`/recipes/hello/runs/${RUN_ID}`)).body;
+    assert.match(run, /<section class="result md">/);
+    const css = (await call('/static/app.css')).body;
+    assert.match(css, /\.args pre, \.call-result \{/);
+    assert.doesNotMatch(css, /(^|[\s,])\.result[\s,{]/m, 'no rule for .result alone, which the answer carries');
+  }));

@@ -101,6 +101,30 @@ stream; `say`, `stop`, `answer`, `mode` and `archive` change a conversation,
 and `DELETE` removes it, from this origin only.
 `/api/recipes/<name>/runs/<id>/chat` is the question about a run.
 
+## On the phone
+
+ämtli installs as an app: "Add to Home Screen" in Safari, "Install app" in
+Chrome. It starts without the browser around it and has a Reload button on
+the dashboard and a chore's page, since there is no browser to reload with.
+The manifest (`/manifest.webmanifest`) is linked with its cookie
+(`crossorigin="use-credentials"`), because Access refuses a request for it
+without one. The icons are drawn by the server (`src/web/icon.mjs`) from the
+motif of `public/icon.svg`, so the repo holds no PNG files.
+
+A service worker (`/sw.js`) keeps the versioned static files and a page that
+says there is no connection. It never keeps a page or anything under
+`/api/`, and it leaves the chat's event stream alone. Each release is a new
+worker, which drops the old one's files.
+
+On a phone only the page scrolls. A wide table or code block scrolls
+sideways inside itself, the list of conversations folds away while one is
+open, and the box to write in stays at the bottom of the screen.
+
+Everything stays behind Access. Some iOS versions fetch the home-screen
+icon without the cookie; if the icon stays blank, an Access bypass for
+`/static/icons/*` and `/manifest.webmanifest` alone is enough, as neither
+holds anything private.
+
 ## Jobs: code first, the model where it pays
 
 Most chores are the same steps every time: fetch, filter, file by a rule.
