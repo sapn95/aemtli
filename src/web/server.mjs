@@ -372,6 +372,11 @@ export function createApp(deps) {
     const method = what === 'account' ? 'GET' : 'POST';
     if (req.method !== method) return sendJson(res, 405, { error: `${method} only` });
     if (method === 'POST' && !sameOrigin(req)) return crossSite(res);
+    // Each look starts a server process at the gateway, which no other site's
+    // page should be able to set off. A same-origin GET carries no Origin,
+    // so here the browser's Sec-Fetch-Site is what tells.
+    const site = req.headers['sec-fetch-site'];
+    if (method === 'GET' && site && site !== 'same-origin') return crossSite(res);
     if (!gateways?.configured || !gateways.list.some(g => g.name === name)) return sendJson(res, 404, { error: 'no such gateway' });
     if (method === 'POST') log(`${user} starts a new ${name} login`);
     let answer;
@@ -383,7 +388,8 @@ export function createApp(deps) {
     }
     if (answer.status === 404) return sendJson(res, 200, { login: false });
     if (answer.status !== 200) return sendJson(res, 502, { error: `the gateway answered ${answer.status}` });
-    return sendJson(res, 200, { login: true, ...(method === 'GET' ? readAccount(answer.body) : readLogin(answer.body)) });
+    if (method === 'POST') return sendJson(res, 200, { login: true, ...readLogin(answer.body) });
+    return sendJson(res, 200, { login: true, canLogin: answer.body.canLogin === true, ...readAccount(answer.body) });
   }
 
   /** Routes one authenticated request. */
@@ -394,9 +400,13 @@ export function createApp(deps) {
       const file = path.slice('/static/'.length);
       if (!Object.hasOwn(STATIC, file)) return send(res, 404, 'text/plain', 'not found');
       // The pages ask for ?v=<version>, so a new release is a new URL and the
-      // old file can be cached for good; anything else for five minutes.
+      // old file can be cached for good; anything else for five minutes. A
+      // script a page script imports (copy.js) comes without the version, and
+      // is asked for again each time: an old one beside a new page script
+      // could miss what that script imports from it.
       const pinned = url.searchParams.get('v') === version;
-      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), { 'cache-control': pinned ? 'public, max-age=31536000, immutable' : 'max-age=300' });
+      const unpinned = STATIC[file] === 'text/javascript' ? 'no-cache' : 'max-age=300';
+      return send(res, 200, STATIC[file], readFileSync(join(PUBLIC, file)), { 'cache-control': pinned ? 'public, max-age=31536000, immutable' : unpinned });
     }
     if (req.method === 'GET' && path === '/') {
       const items = await collect();

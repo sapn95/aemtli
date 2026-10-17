@@ -61,7 +61,8 @@ function resultText(result) {
 /**
  * Reads GATEWAY_ACCOUNT: the tools that tell and renew the server's login,
  * as {"status":{"tool":"verify-login"},"login":{"tool":"login","arguments":{"force":true}}}.
- * Either may be missing. Null when unset.
+ * The status is required, since without it nobody learns that a login
+ * worked; the login may be missing. Null when unset.
  */
 export function parseAccount(spec) {
   if (!spec) return null;
@@ -73,7 +74,7 @@ export function parseAccount(spec) {
   }
   const valid = step => step === undefined || (step && typeof step.tool === 'string' && step.tool
     && (step.arguments === undefined || (step.arguments && typeof step.arguments === 'object' && !Array.isArray(step.arguments))));
-  if (!account || typeof account !== 'object' || !valid(account.status) || !valid(account.login) || !(account.status || account.login)) {
+  if (!account || typeof account !== 'object' || !account.status || !valid(account.status) || !valid(account.login)) {
     throw new Error('GATEWAY_ACCOUNT must be JSON: {"status":{"tool":"verify-login"},"login":{"tool":"login"}}');
   }
   return { status: account.status ?? null, login: account.login ?? null };
@@ -252,6 +253,13 @@ export function createGateway({ command, env = process.env, policy, approvals, a
   // ends the one before. While it is up, the status is asked there: that
   // process knows first, and no second one reads a cache it is writing.
   let login = null;
+  let closed = false;
+  // One login at a time: a second one waits until the first has its
+  // process, then ends it. Two starting at once would each spawn one, and
+  // the one overwritten would live on with nobody to end it.
+  let logins = Promise.resolve();
+  // One status at a time as well: each is a whole server process.
+  let telling = null;
   function endLogin() {
     if (!login) return Promise.resolve();
     const { child, timer } = login;
@@ -260,8 +268,15 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     return child.close();
   }
 
-  async function startLogin() {
+  function startLogin() {
+    const run = () => runLogin();
+    logins = logins.then(run, run);
+    return logins;
+  }
+
+  async function runLogin() {
     await endLogin();
+    if (closed) return { ok: false, text: 'the gateway is shutting down' };
     const child = spawnChild(command, childOptions);
     const timer = setTimeout(() => { if (login?.child === child) endLogin(); }, loginMs);
     timer.unref();
@@ -292,14 +307,16 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     if (req.method === 'GET' && path === '/account') {
       if (!account?.status) return json(res, 404, { error: 'no login to tell' });
       const { tool, arguments: args = {} } = account.status;
+      const canLogin = Boolean(account.login);
       if (login?.ready) {
         try {
-          return json(res, 200, await toolCall(login.child, tool, args));
+          return json(res, 200, { ...(await toolCall(login.child, tool, args)), canLogin });
         } catch {
           // It ended in between; a process of its own answers instead.
         }
       }
-      return json(res, 200, await execute({ tool, arguments: args }));
+      telling ??= execute({ tool, arguments: args }).finally(() => { telling = null; });
+      return json(res, 200, { ...(await telling), canLogin });
     }
     if (req.method === 'POST' && path === '/account/login') {
       if (!account?.login) return json(res, 404, { error: 'no login to renew' });
@@ -326,6 +343,8 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     sessions,
     async close() {
       clearInterval(reaper);
+      closed = true;
+      await logins;
       await endLogin();
       await Promise.all([...sessions.keys()].map(id => {
         const s = sessions.get(id);
@@ -352,6 +371,13 @@ export async function startGateway(env = process.env, { version = '0', log = con
   const policy = parsePolicy(readFileSync(env.POLICY_FILE, 'utf8'));
   const adminToken = readFileSync(env.ADMIN_TOKEN_FILE, 'utf8').trim();
   const account = parseAccount(env.GATEWAY_ACCOUNT);
+  // The login tools are the owner's: an agent that could start a device-code
+  // login could hand the code to someone who completes it with their own
+  // account, and the gateway would then hold theirs. So the policy has to
+  // deny them, or the gateway does not start.
+  for (const step of [account?.status, account?.login].filter(Boolean)) {
+    if (policy.decide(step.tool) !== 'deny') throw new Error(`GATEWAY_ACCOUNT names ${step.tool}, which the policy must deny to agents`);
+  }
   const approvals = createApprovals({ dir: `${env.STATE_DIR ?? '/state'}/approvals` });
   // The server gets the gateway's environment minus the gateway's own settings.
   const own = new Set(['MCP_COMMAND', 'POLICY_FILE', 'ADMIN_TOKEN_FILE', 'STATE_DIR', 'PORT', 'ADMIN_PORT', 'HOST', 'GATEWAY_ACCOUNT']);

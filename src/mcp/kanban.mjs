@@ -1,12 +1,13 @@
-// The kanban board (upstream golang-kanban v2), for goose and the jobs.
+// The kanban board, for goose and the jobs. It works with byge
+// (github.com/sapn95/byge) only, the owner's fork of golang-kanban v2.
 //
-// v2 has no API. What a person does on the board is a form post, and what
-// they see is a page rendered from fixed templates; this client posts the
-// same forms and reads the same pages. It is written against the commit the
-// cluster runs, and a test reads pages that commit rendered, so a template
-// change upstream shows up as a failing test before it reaches the board.
+// What a person does on the board is a form post, and what they see is a
+// page rendered from fixed templates; this client posts the same forms and
+// reads the same pages. It is written against the byge release the cluster
+// runs, and a test reads pages that release rendered, so a template change
+// in byge shows up as a failing test before it reaches the board.
 //
-// Upstream refuses a cross-site browser post (Sec-Fetch-Site, Origin). A
+// The board refuses a cross-site browser post (Sec-Fetch-Site, Origin). A
 // request from a server carries neither header and is let through; the
 // NetworkPolicy in front of the board is what keeps everything else out.
 
@@ -111,9 +112,8 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * `baseUrl` is the board's address inside the cluster. `as` and
- * `userHeader` are for a board that reads who is signed in from a header
- * (upstream's AUTH_HEADER): the address the cards are written as, and the
- * header's name.
+ * `userHeader` are byge's service identity (its AUTH_SERVICE_HEADER): who
+ * the cards are written as, and the header's name.
  */
 export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeoutMs = 15_000 }) {
   if (Boolean(as) !== Boolean(userHeader)) throw new Error('KANBAN_AS and KANBAN_USER_HEADER go together: set both or neither');

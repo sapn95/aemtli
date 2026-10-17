@@ -40,6 +40,9 @@ let status = 'idle';
 let turns = 0;
 // Which conversations are put away, as the last listing said.
 let away = new Set();
+// Conversations being archived or deleted just now: the list is drawn anew
+// every 30 seconds, and their buttons stay off meanwhile.
+const busy = new Set();
 // The images that go with the next message: { mimeType, data, preview }.
 let pictures = [];
 const MAX_PICTURES = 6;
@@ -142,6 +145,7 @@ async function refreshList() {
       iconButton(c.archived ? 'restore' : 'archive', c.archived ? `Put “${name}” back` : `Archive “${name}”`, button => setArchived(c.id, !c.archived, button)),
       iconButton('delete', `Delete “${name}”`, button => remove(c.id, c.title, button)),
     );
+    if (busy.has(c.id)) for (const b of tools.children) b.disabled = true;
     li.className = 'chat-row';
     li.append(a, tools);
     return li;
@@ -470,10 +474,13 @@ fresh.addEventListener('click', () => {
 /** Puts a conversation away, or back; `button` waits meanwhile. */
 async function setArchived(id, archived, button) {
   button.disabled = true;
+  busy.add(id);
   try {
     await api(`/api/chats/${encodeURIComponent(id)}/archive`, { method: 'POST', body: { archived } });
+    busy.delete(id);
     await refreshList();
   } catch (err) {
+    busy.delete(id);
     state.textContent = `Not changed: ${err.message}`;
     button.disabled = false;
   }
@@ -483,14 +490,17 @@ async function setArchived(id, archived, button) {
 async function remove(id, title, button) {
   if (!window.confirm(`Delete “${title || 'this conversation'}”? The whole conversation goes, at goose as well, and that cannot be undone.`)) return;
   button.disabled = true;
+  busy.add(id);
   try {
     await api(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    busy.delete(id);
     if (id === current) {
       location.hash = '';
       open(null);
     }
     await refreshList();
   } catch (err) {
+    busy.delete(id);
     state.textContent = `Not deleted: ${err.message}`;
     button.disabled = false;
   }

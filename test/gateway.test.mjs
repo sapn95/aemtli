@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePolicy } from '../src/gateway/policy.mjs';
 import { createApprovals } from '../src/gateway/approvals.mjs';
-import { startGateway, parseAccount } from '../src/gateway/server.mjs';
+import { createServer } from 'node:http';
+import { startGateway, parseAccount, createGateway } from '../src/gateway/server.mjs';
 import { writeJsonAtomic } from '../src/store/runs.mjs';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-mcp.mjs', import.meta.url));
@@ -278,6 +279,11 @@ test('a gateway will not start half configured', async () => {
   await assert.rejects(startGateway({ ...base, ADMIN_TOKEN_FILE: '' }), /ADMIN_TOKEN_FILE/);
   await assert.rejects(startGateway(base), /at least 16 characters/);
   await assert.rejects(startGateway({ ...base, GATEWAY_ACCOUNT: '{"login":"login"}' }), /GATEWAY_ACCOUNT/);
+  writeFileSync(join(dir, 't'), 'a-token-long-enough-for-the-gateway');
+  // An agent must not reach the login: the policy has to deny it.
+  await assert.rejects(startGateway({ ...base, GATEWAY_ACCOUNT: '{"status":{"tool":"verify"},"login":{"tool":"x"}}' }), /names verify, which the policy must deny/);
+  writeFileSync(join(dir, 'p'), 'allow: [x]\ndeny: [verify]');
+  await assert.rejects(startGateway({ ...base, GATEWAY_ACCOUNT: '{"status":{"tool":"verify"},"login":{"tool":"x"}}' }), /names x, which the policy must deny/);
 });
 
 test('a big answer comes through whole, and one past the limit stops the server', () =>
@@ -299,7 +305,7 @@ test('GATEWAY_ACCOUNT: a status, a login or both, each a tool with optional argu
   assert.equal(parseAccount(undefined), null);
   assert.deepEqual(parseAccount('{"status":{"tool":"verify-login"}}'), { status: { tool: 'verify-login' }, login: null });
   assert.deepEqual(parseAccount(ACCOUNT).login, { tool: 'secret_login', arguments: { force: true } });
-  for (const bad of ['nope', '[]', '{}', '{"status":{}}', '{"login":{"tool":""}}', '{"login":{"tool":"x","arguments":[1]}}', '{"status":"verify-login"}']) {
+  for (const bad of ['nope', '[]', '{}', '{"status":{}}', '{"login":{"tool":"x"}}', '{"status":{"tool":"s"},"login":{"tool":""}}', '{"status":{"tool":"s"},"login":{"tool":"x","arguments":[1]}}', '{"status":"verify-login"}']) {
     assert.throws(() => parseAccount(bad), /GATEWAY_ACCOUNT/, bad);
   }
 });
@@ -335,10 +341,76 @@ test('the owner sees and renews the server\'s login through the admin port, arou
     // The login completes after the tool answered, in the same process: only
     // a gateway that kept that process up and asks it learns of it.
     await new Promise(resolve => setTimeout(resolve, 250));
-    const after = JSON.parse((await admin('/account')).body.text);
+    const told = (await admin('/account')).body;
+    assert.equal(told.canLogin, true);
+    const after = JSON.parse(told.text);
     assert.equal(after.success, true);
     assert.equal(after.userData.userPrincipalName, 'example@example.com');
-    // A second login starts over in a process of its own.
-    await admin('/account/login', { method: 'POST' });
+    assert.equal(after.pid, answer.pid, 'asked in the process that logs in');
+    // A second login starts over in a process of its own, and ends the first.
+    const second = JSON.parse((await admin('/account/login', { method: 'POST' })).body.text);
+    assert.notEqual(second.pid, answer.pid);
+    assert.ok(!alive(answer.pid), 'the first login\'s process is gone');
     assert.equal(JSON.parse((await admin('/account')).body.text).success, false);
   }, { env: { GATEWAY_ACCOUNT: ACCOUNT } }));
+
+/** Whether a process still runs. */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('logins asked for at once run one after the other, and leave no process behind', async () => {
+  let pids = [];
+  await withGateway(async ({ admin }) => {
+    const all = await Promise.all([1, 2, 3].map(() => admin('/account/login', { method: 'POST' })));
+    pids = all.map(r => JSON.parse(r.body.text).pid);
+    assert.equal(new Set(pids).size, 3, 'three logins, three processes');
+    assert.deepEqual(pids.slice(0, 2).map(alive), [false, false], 'each ended by the next');
+    assert.equal(alive(pids[2]), true, 'the last one waits for its code');
+  }, { env: { GATEWAY_ACCOUNT: ACCOUNT } });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(pids.map(alive), [false, false, false], 'and closing the gateway ends that one too');
+});
+
+test('a status-only account can be told but not renewed, and the status is shared while it runs', () =>
+  withGateway(async ({ admin, lines }) => {
+    const [a, b] = await Promise.all([admin('/account'), admin('/account')]);
+    assert.equal(a.body.canLogin, false);
+    assert.equal(JSON.parse(a.body.text).pid, JSON.parse(b.body.text).pid, 'one process answered both');
+    assert.equal((await admin('/account/login', { method: 'POST' })).status, 404);
+    assert.ok(!lines.some(l => l.startsWith('login')));
+  }, { env: { GATEWAY_ACCOUNT: JSON.stringify({ status: { tool: 'secret_status' } }) } }));
+
+test('a login\'s process lives as long as a code does, and then the status comes from a fresh one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aemtli-gw-'));
+  const gateway = createGateway({
+    command: [process.execPath, FAKE],
+    env: { PATH: process.env.PATH },
+    policy: parsePolicy('deny: [secret_*]'),
+    approvals: createApprovals({ dir }),
+    adminToken: TOKEN,
+    account: parseAccount(ACCOUNT),
+    log: () => {},
+    loginMs: 400,
+  });
+  const server = createServer((req, res) => gateway.admin(req, res));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const admin = async (path, method = 'GET') => (await fetch(`http://127.0.0.1:${server.address().port}${path}`, { method, headers: { authorization: `Bearer ${TOKEN}` } })).json();
+  try {
+    const { pid } = JSON.parse((await admin('/account/login', 'POST')).text);
+    assert.equal(JSON.parse((await admin('/account')).text).pid, pid);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.ok(!alive(pid), 'ended when its time was up');
+    const later = JSON.parse((await admin('/account')).text);
+    assert.notEqual(later.pid, pid);
+    assert.equal(later.success, false, 'a fresh process knows only what was written down');
+  } finally {
+    await gateway.close();
+    server.close();
+  }
+});

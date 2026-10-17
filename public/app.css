@@ -384,7 +384,10 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 
 /* A code box carries its Copy button in its top right corner, where a short
    first line leaves room. */
-.code-box { position: relative; }
+.code-box { position: relative; margin: 1em 0; }
+/* The box keeps the block's margins, so an answer that starts or ends with
+   one loses them like any first or last element. */
+.code-box > pre { margin: 0; }
 .code-box .copy { position: absolute; top: 0.3rem; right: 0.3rem; padding: 0.15rem 0.55rem; font-size: 0.8125rem; background: var(--sheet); border: 1px solid var(--rule); }
 .code-box .copy:hover:not(:disabled) { background: var(--royal-soft); }
 
