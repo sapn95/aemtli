@@ -19,6 +19,8 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `aemtli model-proxy` | The only holder of the model's API key. goose and the runs call the model through it with a placeholder key; it puts the real one on. |
 | `aemtli mcp-gateway` | Serves one MCP server to the agents, in a pod that alone holds that server's credentials. Calls the owner has to approve are held until they decide in the UI. |
 | `aemtli mcp-kanban` | The kanban board ([golang-kanban](https://github.com/NicolasHaas/golang-kanban) v2) as MCP tools on stdio, for a gateway to run. See [The kanban board](#the-kanban-board). |
+| `aemtli mcp-recipes` | The chores in the GitOps repository, and a pull request to change one. See [Chores that improve themselves](#chores-that-improve-themselves). |
+| `aemtli mcp-github` | The owner's repositories through a GitHub App: read, merge a green pull request, tag a release. See [The repositories](#the-repositories). |
 
 One image holds all six: goose, node and npm (for MCP servers started with
 `npx`), uv and python (for `uvx`), and the app.
@@ -260,14 +262,63 @@ what it asks for is never trusted on its word:
   default export, and it must pass `node --check`, which parses it without
   running it. A proposal that cannot run never reaches a branch.
 - The cluster follows `main`, so nothing a proposal says runs anywhere until
-  a person merges it. That merge is the control; read the diff.
+  a person merges it. That merge is the control; read the diff. The
+  repositories gateway below can merge, which is why its policy has to hold
+  `github_merge`.
 - The token is a fine-grained one for that repository with Contents and Pull
   requests, **and no Workflows permission**: a proposal can then never change
   what CI runs, which is what would otherwise reach the CI secrets.
 
 Settings: `RECIPES_REPO` (`owner/name`), `RECIPES_REPO_PATH`,
 `RECIPES_REPO_BRANCH` (`main`), `RECIPES_TOKEN_FILE`, and for a different
-host `GITHUB_API`.
+host `GITHUB_API`. Without `RECIPES_TOKEN_FILE` it uses the GitHub App below
+(`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`) and asks for a token that reaches
+only `RECIPES_REPO`, with Contents and Pull requests and nothing else.
+
+## The repositories
+
+`aemtli mcp-github` lets goose and the jobs look after the owner's
+repositories: see what is open, merge a pull request whose checks are green,
+and tag a release.
+
+| Tool | |
+| --- | --- |
+| `github_repos`, `github_pull_requests`, `github_pull_request`, `github_releases` | read |
+| `github_merge` | one pull request into the default branch, by rebase or squash |
+| `github_release` | a new `v*` tag on a commit the default branch holds |
+
+It acts as a GitHub App with write access and nothing more: Contents and Pull
+requests to write, Checks and Commit statuses to read, no Administration, no
+Workflows. The owner's own token would get past any branch protection that
+does not enforce admins. The App does not: a red required check stops it like
+anyone else, and it cannot change a setting. The private
+key stays in the gateway pod. It signs a JWT, the JWT buys an installation
+token that lasts an hour, and the token is renewed five minutes before it runs
+out.
+
+The code checks these whatever the policy says:
+
+- A merge names the head commit the owner saw. If the branch has moved since,
+  nothing is merged.
+- Every check on that commit is green, and at least one ran. This also covers
+  the repositories without branch protection.
+- A pull request that changes `.github/workflows` is refused. The App may not
+  write workflows, so those are merged in the browser.
+- A release tags a commit the default branch already holds, with green checks,
+  under a tag that does not exist yet, and matching `package.json` if there is
+  one. The tag starts the repository's own release workflow. Bump the version
+  in a merged pull request first.
+
+No tool pushes, closes, deletes or changes a setting. Hold `github_merge` and
+`github_release` in the gateway's policy: with `recipes_propose` next to it, a
+free merge would let goose merge its own proposal.
+
+The App, once: register it under the owner's developer settings with the
+permissions above and no webhook, install it on all repositories, and give the
+gateway its id and private key.
+
+Settings: `GITHUB_OWNER`, `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE` (the private
+key, PEM), and for a different host `GITHUB_API`.
 
 ## The kanban board
 

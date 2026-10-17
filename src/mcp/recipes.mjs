@@ -10,7 +10,8 @@
 // should have no Workflows permission, so a proposal can never change what
 // CI runs.
 //
-// Everything goes through the GitHub REST API with a fine-grained token.
+// Everything goes through the GitHub REST API, with a fine-grained token or
+// with the GitHub App's installation token narrowed to this one repository.
 
 import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -74,7 +75,7 @@ export async function checkSyntax(source, { node = process.execPath, dir = tmpdi
 /**
  * `repo` is "owner/name", `path` the folder the recipes live in, `base` the
  * branch they live on, `token` a fine-grained token with Contents and Pull
- * requests, and nothing else.
+ * requests, and nothing else, or a function that resolves to one.
  */
 export function createRecipes({ repo, path, base = 'main', token, api = 'https://api.github.com', branchPrefix = 'goose', fetchImpl = fetch, now = () => new Date(), timeoutMs = 20_000 }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(String(repo ?? ''))) throw new Error('RECIPES_REPO must be "owner/name"');
@@ -86,7 +87,7 @@ export function createRecipes({ repo, path, base = 'main', token, api = 'https:/
     const res = await fetchImpl(`${api}${where}`, {
       method,
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${typeof token === 'function' ? await token() : token}`,
         accept: 'application/vnd.github+json',
         'x-github-api-version': '2022-11-28',
         'user-agent': 'aemtli',
