@@ -8,6 +8,8 @@
 // broker keeps is the live part: what each conversation shows right now, who
 // is watching it, and the question waiting for an answer.
 
+import { randomBytes } from 'node:crypto';
+
 const TOOL_WORDS = { pending: 'waiting', in_progress: 'running', completed: 'done', failed: 'failed' };
 // What one conversation shows at most. Trimmed in steps, and each trim sends
 // the watchers a new snapshot, because the stream addresses events by index.
@@ -20,20 +22,93 @@ const PROTOCOL = 1;
 const ANSWER_MS = 60_000;
 const gone = () => Object.assign(new Error('no such conversation'), { status: 404 });
 
+// Images: the types the model reads, as their first bytes show them. A
+// browser's word for the type is not taken on its own.
+const IMAGE_MAGIC = {
+  'image/jpeg': b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': b => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/gif': b => ['GIF87a', 'GIF89a'].includes(b.subarray(0, 6).toString('latin1')),
+  'image/webp': b => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
+};
+/** At most this many images go with one message. */
+export const MAX_IMAGES = 6;
+// The model takes an image of up to 5 MB as sent, which is base64.
+const MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
+// All of a message's images together: the whole prompt is one WebSocket
+// message to goose, and goose takes a frame of up to 16 MiB.
+export const MAX_IMAGES_BASE64 = 12 * 1024 * 1024;
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+// Images the page can show, kept in memory: they come from the browser or
+// from goose replaying a conversation, and goose has them again on the next
+// load. Past this the oldest go first.
+const IMAGE_MEMORY = 64 * 1024 * 1024;
+
+const badImage = message => Object.assign(new Error(message), { status: 400 });
+
+/**
+ * The images a message carries, checked: at most MAX_IMAGES, each a JPEG,
+ * PNG, GIF or WebP whose bytes say so, in base64, small enough for the
+ * model. Returns [{ mimeType, data }]; throws a 400 saying what is wrong.
+ */
+export function readImages(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw badImage('images must be a list');
+  if (raw.length > MAX_IMAGES) throw badImage(`at most ${MAX_IMAGES} images go with one message`);
+  let total = 0;
+  return raw.map((image, i) => {
+    const which = `image ${i + 1}`;
+    const { mimeType, data } = image ?? {};
+    if (!Object.hasOwn(IMAGE_MAGIC, mimeType)) throw badImage(`${which}: only JPEG, PNG, GIF and WebP are read`);
+    if (typeof data !== 'string' || data.length % 4 !== 0 || !BASE64.test(data)) throw badImage(`${which}: the data must be base64`);
+    if (data.length > MAX_IMAGE_BASE64) throw badImage(`${which} is larger than the model takes (5 MB)`);
+    total += data.length;
+    if (total > MAX_IMAGES_BASE64) throw badImage('the images together are larger than one message can carry (12 MB)');
+    if (!IMAGE_MAGIC[mimeType](Buffer.from(data.slice(0, 64), 'base64'))) throw badImage(`${which} is not the ${mimeType.slice(6).toUpperCase()} it says it is`);
+    return { mimeType, data };
+  });
+}
+
 /**
  * `connect()` returns a WebSocket-like object (send, close, onopen,
  * onmessage, onclose). `cwd` and `mcpServers` go to every session. `notify`
  * sends a push. `link(id)` is where a push points. `render(text)` turns
  * goose's Markdown into HTML that is safe to put into the page; without it
- * the page shows the text as it is.
+ * the page shows the text as it is. `imageMemory` is how many bytes of
+ * images are kept for the page.
  */
-export function createChatBroker({ connect, cwd, mcpServers = [], notify = () => Promise.resolve(false), link = () => undefined, log = () => {}, answerMs = ANSWER_MS, render = null, renderMs = 250 }) {
+export function createChatBroker({ connect, cwd, mcpServers = [], notify = () => Promise.resolve(false), link = () => undefined, log = () => {}, answerMs = ANSWER_MS, render = null, renderMs = 250, imageMemory = IMAGE_MEMORY }) {
   let socket = null;
   let ready = null;
   let nextId = 1;
   const pending = new Map();
   const chats = new Map();
   let closed = false;
+  // Image id -> { chat, mimeType, data }, oldest first.
+  const images = new Map();
+  let imageBytes = 0;
+
+  /** Keeps an image for the page to fetch; returns what an event carries of it. */
+  function keepImage(c, mimeType, data) {
+    const id = randomBytes(12).toString('hex');
+    const bytes = Buffer.from(data, 'base64');
+    images.set(id, { chat: c.id, mimeType, data: bytes });
+    imageBytes += bytes.length;
+    for (const [old, kept] of images) {
+      if (imageBytes <= imageMemory || old === id) break;
+      images.delete(old);
+      imageBytes -= kept.data.length;
+    }
+    return { id, mimeType };
+  }
+
+  /** Forgets the images of a conversation that is forgotten or loaded again. */
+  function dropImages(chatId) {
+    for (const [id, kept] of images) {
+      if (kept.chat !== chatId) continue;
+      images.delete(id);
+      imageBytes -= kept.data.length;
+    }
+  }
 
   /** A conversation's live state, made when first needed. */
   function chat(id) {
@@ -53,7 +128,10 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
   /** Keeps at most MAX_IDLE idle conversations in memory, the most recent ones. */
   function forgetIdle() {
     const quiet = [...chats.values()].filter(idle).sort((a, b) => a.touched - b.touched);
-    for (const c of quiet.slice(0, Math.max(0, quiet.length - MAX_IDLE))) chats.delete(c.id);
+    for (const c of quiet.slice(0, Math.max(0, quiet.length - MAX_IDLE))) {
+      chats.delete(c.id);
+      dropImages(c.id);
+    }
   }
 
   /** Tells everyone watching a conversation what changed. */
@@ -117,8 +195,21 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     switch (u.sessionUpdate) {
       case 'user_message_chunk':
       case 'agent_message_chunk': {
-        if (u.content?.type !== 'text') return;
         const role = u.sessionUpdate === 'user_message_chunk' ? 'user' : 'agent';
+        if (u.content?.type === 'image') {
+          // An image goose replays, or one an answer carries: kept for the
+          // page, with the message it belongs to.
+          if (!Object.hasOwn(IMAGE_MAGIC, u.content.mimeType) || typeof u.content.data !== 'string') return;
+          const ref = keepImage(c, u.content.mimeType, u.content.data);
+          if (last?.type === role && !last.closed) {
+            (last.images ??= []).push(ref);
+            emit(c, { kind: 'replace', index: c.events.length - 1, event: shown(last) });
+          } else {
+            push(c, { type: role, text: '', images: [ref] });
+          }
+          return;
+        }
+        if (u.content?.type !== 'text') return;
         if (last?.type === role && !last.closed) {
           last.text += u.content.text;
           emit(c, { kind: 'append', index: c.events.length - 1, text: u.content.text });
@@ -271,6 +362,7 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     if (c.loaded) return Promise.resolve();
     c.loading ??= (async () => {
       c.events = [];
+      dropImages(c.id);
       c.replaying = true;
       try {
         const result = await call('session/load', { sessionId: c.id, cwd, mcpServers });
@@ -343,23 +435,32 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       return () => c.watchers.delete(res);
     },
 
-    /** Sends a message. Resolves once goose took it; the answer streams. */
-    async say(id, text) {
+    /**
+     * Sends a message, with images checked by readImages. Resolves once goose
+     * took it; the answer streams.
+     */
+    async say(id, text, pictures = []) {
       const c = await prepared(id);
       if (c.status !== 'idle') throw Object.assign(new Error('goose is still answering'), { status: 409 });
       const last = c.events.at(-1);
       if (last) last.closed = true;
-      push(c, { type: 'user', text, closed: true });
+      const said = { type: 'user', text, closed: true };
+      if (pictures.length) said.images = pictures.map(p => keepImage(c, p.mimeType, p.data));
+      push(c, said);
       c.turn += 1;
       setStatus(c, 'running');
-      call('session/prompt', { sessionId: id, prompt: [{ type: 'text', text }] }, 0).then(result => {
+      const prompt = [
+        ...(text ? [{ type: 'text', text }] : []),
+        ...pictures.map(p => ({ type: 'image', mimeType: p.mimeType, data: p.data })),
+      ];
+      call('session/prompt', { sessionId: id, prompt }, 0).then(result => {
         drawNow(c);
         if (c.events.at(-1)) c.events.at(-1).closed = true;
         if (result?.stopReason === 'cancelled') push(c, { type: 'note', text: 'Stopped.' });
         dropQuestions(c, false);
         setStatus(c, 'idle');
         // Nobody watching: say on the phone that the answer is there.
-        if (!c.watchers.size) notify({ title: 'goose ist fertig', message: c.title ?? text.slice(0, 80), click: link(c.id) }).catch(() => {});
+        if (!c.watchers.size) notify({ title: 'goose ist fertig', message: c.title ?? (text || 'Bild').slice(0, 80), click: link(c.id) }).catch(() => {});
       }, err => {
         push(c, { type: 'error', text: err.message });
         dropQuestions(c, false);
@@ -417,6 +518,13 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
       for (const res of c?.watchers ?? []) res.end();
       if (c) c.watchers.clear();
       chats.delete(id);
+      dropImages(id);
+    },
+
+    /** One image of a conversation, as it was kept, or null. */
+    image(chatId, imageId) {
+      const kept = images.get(imageId);
+      return kept && kept.chat === chatId ? { mimeType: kept.mimeType, data: kept.data } : null;
     },
 
     close() {
@@ -425,5 +533,6 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     },
     /** For the tests: what the broker holds. */
     chats,
+    images,
   };
 }

@@ -14,6 +14,7 @@ import { LABEL_RECIPE, jobRunning } from './k8s.mjs';
 import { listRuns, readRun, readRunFile, readRunAttachment, writeJsonAtomic, RECIPE_NAME, RUN_ID } from '../store/runs.mjs';
 import { layout, dashboard, recipePage, runPage, chatPage, approvalsPage } from './pages.mjs';
 import { runPrompt, QUESTION_CHARS } from './ask.mjs';
+import { readImages, MAX_IMAGES_BASE64 } from './chats.mjs';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const STATIC = {
@@ -213,16 +214,19 @@ export function createApp(deps) {
   const crossSite = res => send(res, 403, 'application/json', JSON.stringify({ error: 'cross-site request refused' }));
 
   const CHAT_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+  const IMAGE_ID = /^[0-9a-f]{24}$/;
+  // A message with its images: their base64, and room for the text.
+  const SAY_BYTES = MAX_IMAGES_BASE64 + 256 * 1024;
   const sendJson = (res, status, body) => send(res, status, 'application/json', JSON.stringify(body));
 
-  /** A JSON body of at most 64 KB, or null. */
-  function jsonBody(req) {
+  /** A JSON body of at most `limit` bytes (64 KB), or null. */
+  function jsonBody(req, limit = 65536) {
     return new Promise(resolve => {
       let size = 0;
       const chunks = [];
-      req.on('data', c => { size += c.length; if (size <= 65536) chunks.push(c); });
+      req.on('data', c => { size += c.length; if (size <= limit) chunks.push(c); });
       req.on('end', () => {
-        if (size > 65536) return resolve(null);
+        if (size > limit) return resolve(null);
         try {
           resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
         } catch {
@@ -241,7 +245,7 @@ export function createApp(deps) {
   async function chatApi(req, res, path) {
     if (!chats) return sendJson(res, 404, { error: 'the chat is off: goose serve is not configured' });
     if (req.method !== 'GET' && !sameOrigin(req)) return crossSite(res);
-    const [, , , id, action] = path.split('/');
+    const [, , , id, action, part] = path.split('/');
     try {
       if (!id) {
         if (req.method === 'GET') {
@@ -285,12 +289,36 @@ export function createApp(deps) {
         else beat = setInterval(() => res.write(': still here\n\n'), 20_000);
         return undefined;
       }
+      if (req.method === 'GET' && action === 'images') {
+        const image = IMAGE_ID.test(part ?? '') ? chats.image(id, part) : null;
+        // Gone from memory: the page opens the conversation again, and
+        // goose's replay brings the image back.
+        if (!image) return sendJson(res, 404, { error: 'no such image' });
+        res.writeHead(200, {
+          'content-type': image.mimeType,
+          'content-length': image.data.length,
+          // An id names one image for as long as it is kept.
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff',
+          // Opened on its own, an image is a document: it may show itself.
+          'content-security-policy': "default-src 'none'; img-src 'self'",
+        });
+        return res.end(image.data);
+      }
       if (req.method === 'POST') {
-        const body = await jsonBody(req);
-        if (body === null) return sendJson(res, 400, { error: 'a JSON body of at most 64 KB' });
-        if (action === 'say') {
-          if (typeof body.text !== 'string' || !body.text.trim()) return sendJson(res, 400, { error: 'text is empty' });
-          await chats.say(id, body.text);
+        const say = action === 'say';
+        const body = await jsonBody(req, say ? SAY_BYTES : undefined);
+        if (body === null) return sendJson(res, 400, { error: say ? 'a JSON body of at most 12 MB' : 'a JSON body of at most 64 KB' });
+        if (say) {
+          if (typeof body.text !== 'string') return sendJson(res, 400, { error: 'text must be a string' });
+          let images;
+          try {
+            images = readImages(body.images);
+          } catch (err) {
+            return sendJson(res, 400, { error: err.message });
+          }
+          if (!body.text.trim() && !images.length) return sendJson(res, 400, { error: 'text is empty' });
+          await chats.say(id, body.text.trim() ? body.text : '', images);
           return sendJson(res, 202, { ok: true });
         }
         if (action === 'archive') {

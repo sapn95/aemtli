@@ -372,10 +372,12 @@ export function chatPage(on = true) {
   </div>
   <p id="state" class="state" role="status">Pick a conversation or start one.</p>
   <div id="log" class="chat" aria-live="polite"></div>
+  <div id="attached" class="attached" aria-label="Images to send" hidden></div>
   <form id="form" class="composer">
     <label class="visually-hidden" for="input">Message</label>
-    <textarea id="input" rows="3" placeholder="Ask goose something. Cmd+Enter sends. It keeps working when you close the page." required></textarea>
-    <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
+    <textarea id="input" rows="3" placeholder="Ask goose something, or add an image (paste or drop it here). Cmd+Enter sends. It keeps working when you close the page."></textarea>
+    <input type="file" id="pick" accept="image/*" multiple hidden>
+    <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="attach" class="quiet-button">Image</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
   </form>
 </div>
 </section>`;
