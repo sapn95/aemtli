@@ -11,8 +11,18 @@
 const EVERY_MS = 30_000;
 const QUIET_MS = 60_000;
 
-/** The page's <main> as the browser serialises it, for comparing. */
-const content = html => new DOMParser().parseFromString(html, 'text/html').querySelector('main')?.innerHTML ?? '';
+// Text that changes with the clock alone, such as "in 5 min" for a chore's
+// next run. Left out of the comparison, or an idle dashboard would reload
+// every minute for nothing.
+const CLOCK = '.next';
+
+/** A page's <main> as the browser serialises it, without the clock's text. */
+function content(html) {
+  const main = new DOMParser().parseFromString(html, 'text/html').querySelector('main');
+  if (!main) return '';
+  for (const el of main.querySelectorAll(CLOCK)) el.textContent = '';
+  return main.innerHTML;
+}
 
 /**
  * Starts refreshing. `original` is the page's <main> as the server sent it,
@@ -21,6 +31,7 @@ const content = html => new DOMParser().parseFromString(html, 'text/html').query
 export function autoRefresh(original) {
   const main = document.querySelector('main');
   if (!main) return;
+  const served = content(`<main>${original}</main>`);
   let touched = 0;
   for (const event of ['pointerdown', 'keydown', 'input']) document.addEventListener(event, () => { touched = Date.now(); }, true);
 
@@ -28,7 +39,7 @@ export function autoRefresh(original) {
     const active = document.activeElement;
     return Date.now() - touched < QUIET_MS
       || Boolean(active?.matches('input, textarea, select, [contenteditable]'))
-      || [...main.querySelectorAll('input:not([type=hidden]), textarea')].some(field => field.value.trim())
+      || [...main.querySelectorAll('input:not([type]), input[type=text], input[type=search], textarea')].some(field => field.value.trim())
       || Boolean(main.querySelector('details[open]'))
       || Boolean(String(window.getSelection?.() ?? '').trim())
       // An outcome that ends in "…" is a request still on its way.
@@ -43,7 +54,7 @@ export function autoRefresh(original) {
       const res = await fetch(location.href, { cache: 'no-store', headers: { accept: 'text/html' } });
       // A redirect is Access asking to log in again: a reload shows that page.
       if (!res.ok || res.redirected) return;
-      if (content(await res.text()) !== original && !busy()) location.reload();
+      if (content(await res.text()) !== served && !busy()) location.reload();
     } catch {
       // Offline for the moment: the next look tries again.
     } finally {
