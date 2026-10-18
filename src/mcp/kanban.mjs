@@ -67,7 +67,7 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
   if (Boolean(as) !== Boolean(userHeader)) throw new Error('KANBAN_AS and KANBAN_USER_HEADER go together: set both or neither');
   const base = `${String(baseUrl).replace(/\/+$/, '')}/api/v1`;
   const identity = as ? { [userHeader]: as } : {};
-  const grantHint = `grant the group ${as ? `"${as}"` : 'of this service'} write on the board's access page (Settings, Access)`;
+  const grantHint = `grant the group ${as ? `"${as}"` : 'of this service'} write on the board's access page (Settings, Access, as an idp group)`;
   // Calls that read a card and write it back run one after the other per
   // card, so two changes at once cannot undo each other.
   const locks = new Map();

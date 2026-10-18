@@ -434,9 +434,9 @@ from the gateway carries the header named in `KANBAN_USER_HEADER`, with
 `KANBAN_AS` as its value, and byge treats the caller as a member of that
 group. From v2.17 on, byge shows a board only to whom the board grants a
 role. So the owner grants the group (here `aemtli`) write on every board goose
-should use, on the board's access page under Settings. A board without that
-grant is missing from `kanban_list_boards`, and naming it gives an error that
-says what to grant.
+should use: Settings, then Access, then the row "idp group". A board without
+that grant is missing from `kanban_list_boards`, and naming it gives an error
+that says what to grant.
 
 byge's API has no search across boards. `kanban_search` reads the cards and
 the archive of every board it may read and keeps the cards that have all of
