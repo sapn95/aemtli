@@ -11,7 +11,9 @@
 const ZONE = 'Europe/Zurich';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
-const MAX_VIA = 5;
+// The API takes at most two places to go via, and answers a third with an
+// error.
+const MAX_VIA = 2;
 
 const bad = message => Object.assign(new Error(message), { status: 400 });
 
@@ -140,15 +142,20 @@ export function createTransport({ baseUrl = 'https://transport.opendata.ch/v1', 
     }
     const body = await res.text();
     if (res.status === 429) throw Object.assign(new Error('transport.opendata.ch has had too many questions from here for now; try again later'), { status: 429 });
+    let data = null;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      if (res.ok) throw new Error('transport.opendata.ch answered with something that is not JSON');
+    }
+    // A question it cannot take, such as a third place to go via, comes back
+    // as a 400 with a list of errors in JSON.
+    if (Array.isArray(data?.errors) && data.errors.length) throw Object.assign(new Error(`transport.opendata.ch refused the question: ${data.errors.map(String).join('; ')}`), { status: res.ok ? 400 : res.status });
     if (!res.ok) {
       const detail = body.trim().slice(0, 200) || res.statusText;
       throw Object.assign(new Error(`transport.opendata.ch answered ${res.status}${detail ? `: ${detail}` : ''}`), { status: res.status });
     }
-    try {
-      return JSON.parse(body);
-    } catch {
-      throw new Error('transport.opendata.ch answered with something that is not JSON');
-    }
+    return data ?? {};
   }
 
   return {
@@ -160,7 +167,8 @@ export function createTransport({ baseUrl = 'https://transport.opendata.ch/v1', 
         locations: (data.stations ?? []).slice(0, 10).map(s => ({
           name: s.name,
           id: s.id ?? null,
-          kind: s.icon ?? null,
+          // type is documented but comes back empty; icon says train, bus, tram.
+          kind: s.type ?? s.icon ?? null,
           ...(Number.isFinite(s.coordinate?.x) ? { latitude: s.coordinate.x, longitude: s.coordinate.y } : {}),
         })),
       };
