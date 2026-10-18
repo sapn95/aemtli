@@ -245,6 +245,32 @@ test('with NOTIFY_URL a job pushes through the web pod, which sends it on, and n
   }
 });
 
+test('a push whose connection is refused is tried again, an answer is not', async () => {
+  const { recipesDir, dataDir } = dirs({ retry: `export default async function (ctx) {
+  const first = await ctx.notify({ title: 'a', message: 'b' });
+  const second = await ctx.notify({ title: 'c', message: 'd' });
+  return \`\${first} \${second}\`;
+}
+` });
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'notify-token'), 'job-token');
+  const refused = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    // The first push gets through on the third try; the second never does.
+    if (calls <= 2 || calls >= 4) throw refused();
+    return { ok: true, status: 200, json: async () => ({ delivered: true }) };
+  };
+  const env = { NOTIFY_URL: 'http://aemtli-web:8082/notify', NOTIFY_TOKEN_FILE: join(dataDir, 'notify-token') };
+  const run = await runJob({ name: 'retry', recipesDir, dataDir, env, anthropic: null, fetchImpl, retryMs: 1 });
+  assert.equal(read(dataDir, 'retry', run.id, 'result.md'), 'true false\n');
+  assert.equal(calls, 3 + 4, 'three tries for the first, four for the second');
+  const log = read(dataDir, 'retry', run.id, 'run.log');
+  assert.equal(log.match(/could not reach the web pod \(ECONNREFUSED\), trying again/g).length, 2 + 3);
+  assert.match(log, /could not notify: fetch failed/);
+});
+
 test('a title keeps its umlauts and is cut to one line a phone can show', async () => {
   const seen = [];
   const ntfy = createServer((req, res) => { let t = ''; req.on('data', c => { t += c; }); req.on('end', () => { seen.push(JSON.parse(t).title); res.writeHead(200).end('{}'); }); });

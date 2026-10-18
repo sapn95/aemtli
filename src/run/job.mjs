@@ -126,6 +126,8 @@ export async function runJob({
   gateways = {},
   anthropic = anthropicFrom(env),
   fetchImpl = fetch,
+  // The first wait before a push is tried again; it doubles each time.
+  retryMs = 2000,
   now = () => new Date(),
 }) {
   if (!RECIPE_NAME.test(name)) throw new Error(`not a job name: ${name}`);
@@ -278,20 +280,35 @@ export async function runJob({
         message: String(message).slice(0, 2000),
         ...(click ? { click } : {}),
       };
-      try {
+      // A new pod may not reach anything for its first seconds, until the
+      // network policy knows it: a refused connection is tried again, three
+      // more times, 2, 4 and 8 seconds apart. An answer, even a refusal by
+      // the server, is not.
+      const post = () => fetchImpl(target.url, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${readFileSync(target.tokenFile, 'utf8').trim()}`,
+          'content-type': 'application/json',
+        },
         // Published as JSON, which carries UTF-8 in the title too; a header
         // could only carry latin-1, and "Frist: Prämie" would lose its ä.
-        const res = await fetchImpl(target.url, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${readFileSync(target.tokenFile, 'utf8').trim()}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify(relay
-            ? { ...text, tags: String(tags) }
-            : { topic: ntfy.topic, ...text, tags: String(tags).split(',').map(t => t.trim()).filter(Boolean) }),
-          signal: AbortSignal.timeout(10_000),
-        });
+        body: JSON.stringify(relay
+          ? { ...text, tags: String(tags) }
+          : { topic: ntfy.topic, ...text, tags: String(tags).split(',').map(t => t.trim()).filter(Boolean) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      try {
+        let res;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            res = await post();
+            break;
+          } catch (err) {
+            if (attempt === 3) throw err;
+            log(`could not reach ${relay ? 'the web pod' : 'ntfy'} (${err.cause?.code ?? err.message}), trying again`);
+            await new Promise(resolve => setTimeout(resolve, retryMs * 2 ** attempt));
+          }
+        }
         if (!res.ok) throw new Error(`${relay ? 'the web pod' : 'ntfy'} answered ${res.status}`);
         // The web pod answers 200 with whether any channel took it.
         if (relay && !(await res.json().catch(() => ({}))).delivered) throw new Error('the web pod had no channel that took it');
