@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,54 +104,39 @@ test('one push per new held call, with no arguments in it, and none twice, also 
   withGateway(async ({ url, hold, dir }) => {
     const pushes = [];
     let fail = false;
-    const ntfy = createServer((req, res) => {
-      let text = '';
-      req.on('data', c => { text += c; });
-      req.on('end', () => {
-        pushes.push({ path: req.url, headers: req.headers, text });
-        res.writeHead(fail ? 500 : 200).end('{}');
-      });
-    });
-    await new Promise(r => ntfy.listen(0, '127.0.0.1', r));
-    const ntfyUrl = `http://127.0.0.1:${ntfy.address().port}`;
+    // A channel that says whether it delivered, as createNotify does.
+    const push = async message => {
+      pushes.push(message);
+      return !fail;
+    };
     const client = createGatewayClient({ gateways: [{ name: 'fake', title: 'Fake', url, token: TOKEN }] });
     const lines = [];
-    const make = () => createNotifier({ client, ntfyUrl, topic: 'chores', token: 'ntfy-tok', stateFile: join(dir, 'notified.json'), clickUrl: `${ORIGIN}/#needs`, log: l => lines.push(l) });
-    try {
-      const first = await hold({ to: 'Secret Bank AG' });
-      await make().tick();
-      assert.equal(pushes.length, 1);
-      const [push] = pushes;
-      assert.equal(push.path, '/chores');
-      assert.equal(push.headers.title, 'Fake: send thing');
-      assert.equal(push.headers.click, `${ORIGIN}/#needs`);
-      assert.equal(push.headers.authorization, 'Bearer ntfy-tok');
-      assert.equal(push.text, 'Waiting for your approval.');
-      assert.ok(!JSON.stringify(push).includes('Secret Bank'), 'the arguments stay on the Pi');
+    const make = () => createNotifier({ client, push, stateFile: join(dir, 'notified.json'), clickUrl: `${ORIGIN}/#needs`, log: l => lines.push(l) });
+    const first = await hold({ to: 'Secret Bank AG' });
+    await make().tick();
+    assert.deepEqual(pushes, [{ title: 'Fake: send thing', message: 'Waiting for your approval.', tags: 'raised_hand', click: `${ORIGIN}/#needs` }]);
+    assert.ok(!JSON.stringify(pushes).includes('Secret Bank'), 'the arguments stay on the Pi');
 
-      const notifier = make();
-      await notifier.tick();
-      assert.equal(pushes.length, 1, 'a restart does not send it again');
-      fail = true;
-      await hold({ to: 'b' });
-      await notifier.tick();
-      assert.ok(lines.some(l => /could not notify fake\/.*ntfy answered 500/.test(l)));
-      fail = false;
-      await notifier.tick();
-      assert.equal(pushes.length, 3, 'a failed push is tried again');
-      await client.decide('fake', first, 'reject');
-      await notifier.tick();
-      assert.equal(JSON.parse(readFileSync(join(dir, 'notified.json'), 'utf8')).length, 1, 'decided ones are forgotten');
+    const notifier = make();
+    await notifier.tick();
+    assert.equal(pushes.length, 1, 'a restart does not send it again');
+    fail = true;
+    await hold({ to: 'b' });
+    await notifier.tick();
+    assert.ok(lines.some(l => /could not notify fake\/.*no push went out/.test(l)));
+    fail = false;
+    await notifier.tick();
+    assert.equal(pushes.length, 3, 'a failed push is tried again');
+    await client.decide('fake', first, 'reject');
+    await notifier.tick();
+    assert.equal(JSON.parse(readFileSync(join(dir, 'notified.json'), 'utf8')).length, 1, 'decided ones are forgotten');
 
-      // A burst: five pushes, then one that counts the rest.
-      for (let i = 0; i < 7; i++) await hold({ burst: i });
-      await notifier.tick();
-      assert.deepEqual(pushes.slice(3).map(p => p.headers.title), [...Array(5).fill('Fake: send thing'), '2 more calls']);
-      await notifier.tick();
-      assert.equal(pushes.length, 9, 'and none of the seven again');
-    } finally {
-      ntfy.close();
-    }
+    // A burst: five pushes, then one that counts the rest.
+    for (let i = 0; i < 7; i++) await hold({ burst: i });
+    await notifier.tick();
+    assert.deepEqual(pushes.slice(3).map(p => p.title), [...Array(5).fill('Fake: send thing'), '2 more calls']);
+    await notifier.tick();
+    assert.equal(pushes.length, 9, 'and none of the seven again');
   }));
 
 test('the UI shows held calls with their arguments escaped, and decides them same-origin only', () =>

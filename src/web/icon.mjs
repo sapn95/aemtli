@@ -23,13 +23,16 @@ const TICK_WIDTH = 5;
  * share of the side the 32-unit drawing takes. A full-bleed icon has paper
  * to its edges: iOS rounds an apple-touch-icon itself and paints what is
  * transparent black, and a maskable icon is cut to whatever shape the
- * launcher likes, so its tick stays inside the middle 80 per cent.
+ * launcher likes, so its tick stays inside the middle 80 per cent. The
+ * badge is what Android shows in the status bar for a notification: only
+ * its shape counts, so it is the tick alone, white on nothing.
  */
 export const ICONS = {
   'apple-touch-icon.png': { size: 180, bleed: true, motif: 0.86 },
   'icon-192.png': { size: 192, bleed: false, motif: 1 },
   'icon-512.png': { size: 512, bleed: false, motif: 1 },
   'icon-maskable-512.png': { size: 512, bleed: true, motif: 0.72 },
+  'badge-96.png': { size: 96, badge: true, motif: 1 },
 };
 
 const clamp = v => Math.min(1, Math.max(0, v));
@@ -51,7 +54,7 @@ function toRoundedSquare(x, y, side, radius) {
 }
 
 /** The icon's pixels, RGBA, row by row. */
-export function draw({ size, bleed, motif }) {
+export function draw({ size, bleed, motif, badge = false }) {
   const scale = (size * motif) / UNITS;
   const offset = (size - size * motif) / 2;
   const pixels = Buffer.alloc(size * size * 4);
@@ -66,6 +69,11 @@ export function draw({ size, bleed, motif }) {
       const line = Math.max(...LINES.flatMap(at => [cover(Math.abs(x - at) - LINE_WIDTH / 2), cover(Math.abs(y - at) - LINE_WIDTH / 2)]));
       const tick = cover(Math.min(toSegment(x, y, TICK_POINTS[0], TICK_POINTS[1]), toSegment(x, y, TICK_POINTS[1], TICK_POINTS[2])) - TICK_WIDTH / 2);
       const at = (py * size + px) * 4;
+      if (badge) {
+        pixels.fill(255, at, at + 3);
+        pixels[at + 3] = Math.round(255 * tick);
+        continue;
+      }
       for (let c = 0; c < 3; c += 1) {
         const under = PAPER[c] + (LINE[c] - PAPER[c]) * line;
         pixels[at + c] = Math.round(under + (TICK[c] - under) * tick);

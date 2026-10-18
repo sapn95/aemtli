@@ -19,3 +19,22 @@ spec:
               app: cloudflared
       ports:
         - port: 8080
+---
+# The jobs reach the web pod's notify port, where they hand in a push with a
+# token (NOTIFY_URL in the CronJobs), and no other port of it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aemtli-web-notify
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aemtli-web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aemtli-run
+      ports:
+        - port: 8082

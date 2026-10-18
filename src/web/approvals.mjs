@@ -1,5 +1,5 @@
 // The UI's side of the MCP gateways: it reads the calls they hold, passes on
-// the owner's decision, and sends a push through ntfy for each new one. Each
+// the owner's decision, and sends a push for each new one. Each
 // gateway has a token of its own, which only the UI holds.
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
@@ -155,14 +155,12 @@ export function toolWords(tool, gateway) {
 }
 
 /**
- * Sends one ntfy message per newly held call. What was already sent is kept
- * in `stateFile`, so a restart does not send it again. The message names the
- * gateway and the tool, never the arguments: those stay on the Pi.
+ * Sends one push per newly held call, through `push` (see notify.mjs),
+ * which resolves to true when it went out. What was already sent is kept
+ * in `stateFile`, so a restart does not send it again. The message names
+ * the gateway and the tool, never the arguments: those stay on the Pi.
  */
-/** Printable ASCII only: a header cannot carry more, and an agent picks none of it. */
-const ascii = text => String(text).replace(/[^\x20-\x7e]/g, '?').slice(0, 120);
-
-export function createNotifier({ client, ntfyUrl, topic, token, stateFile, clickUrl, log = console.log, fetchImpl = fetch, perTick = 5 }) {
+export function createNotifier({ client, push, stateFile, clickUrl, log = console.log, perTick = 5 }) {
   let sent = new Set();
   try {
     sent = new Set(JSON.parse(readFileSync(stateFile, 'utf8')));
@@ -184,27 +182,16 @@ export function createNotifier({ client, ntfyUrl, topic, token, stateFile, click
         changed = true;
       }
     }
-    const push = async (title, body) => {
-      const res = await fetchImpl(`${ntfyUrl}/${topic}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          title: ascii(title),
-          tags: 'raised_hand',
-          ...(clickUrl ? { click: clickUrl } : {}),
-        },
-        body,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
+    const send = async (title, message) => {
+      if (!await push({ title, message, tags: 'raised_hand', ...(clickUrl ? { click: clickUrl } : {}) })) throw new Error('no push went out');
     };
     // A few pushes a minute at most; the rest go into one more that counts them.
     const fresh = items.filter(r => !sent.has(`${r.gateway}/${r.id}`));
     for (const [i, r] of fresh.entries()) {
       const key = `${r.gateway}/${r.id}`;
       try {
-        if (i < perTick) await push(`${r.gatewayTitle}: ${toolWords(r.tool, r.gateway)}`, 'Waiting for your approval.');
-        else if (i === perTick) await push(`${fresh.length - perTick} more calls`, 'Also waiting for your approval.');
+        if (i < perTick) await send(`${r.gatewayTitle}: ${toolWords(r.tool, r.gateway)}`, 'Waiting for your approval.');
+        else if (i === perTick) await send(`${fresh.length - perTick} more calls`, 'Also waiting for your approval.');
         sent.add(key);
         changed = true;
         if (i < perTick) log(`notified ${key}`);

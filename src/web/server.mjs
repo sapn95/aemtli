@@ -26,6 +26,7 @@ const STATIC = {
   'chat.js': 'text/javascript',
   'connections.js': 'text/javascript',
   'copy.js': 'text/javascript',
+  'push.js': 'text/javascript',
   'install.js': 'text/javascript',
   'fonts/schibsted-grotesk.woff2': 'font/woff2',
   'fonts/OFL.txt': 'text/plain',
@@ -74,7 +75,7 @@ function recipeMeta(recipesDir, name) {
  * timeZone (for showing times), gateways, stateDir, log, now.
  */
 export function createApp(deps) {
-  const { k8s, dataDir, recipesDir, verify, allowedOrigin, version, timeZone: displayZone = 'UTC', gateways = null, stateDir = null, chats = null, log = console.log, now = () => new Date() } = deps;
+  const { k8s, dataDir, recipesDir, verify, allowedOrigin, version, timeZone: displayZone = 'UTC', gateways = null, stateDir = null, chats = null, webPush = null, log = console.log, now = () => new Date() } = deps;
 
   // The owner's favourite chores, on the web pod's own volume so a phone and a
   // laptop see the same stars. Without a state directory there are none.
@@ -396,6 +397,37 @@ export function createApp(deps) {
     return sendJson(res, 200, { login: true, canLogin: answer.body.canLogin === true, ...readAccount(answer.body) });
   }
 
+  /**
+   * Web Push for this browser: GET /api/push says whether the server can
+   * send and with which key; POST .../subscribe keeps a subscription,
+   * .../unsubscribe forgets one, and .../test sends to every device.
+   */
+  async function pushApi(req, res, user, path) {
+    if (path === '/api/push') {
+      if (req.method !== 'GET') return sendJson(res, 405, { error: 'GET only' });
+      return sendJson(res, 200, webPush ? { enabled: true, publicKey: webPush.publicKey, devices: webPush.count() } : { enabled: false });
+    }
+    const verb = path.slice('/api/push/'.length);
+    if (!['subscribe', 'unsubscribe', 'test'].includes(verb)) return sendJson(res, 404, { error: 'not found' });
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' });
+    if (!sameOrigin(req)) return crossSite(res);
+    if (!webPush) return sendJson(res, 503, { error: 'Web Push is not set up (VAPID_PRIVATE_KEY_FILE)' });
+    if (verb === 'test') {
+      const delivered = await webPush.send({ title: 'ämtli', message: 'Notifications reach this device.', click: '/connections' });
+      return sendJson(res, 200, { delivered });
+    }
+    const body = await jsonBody(req, 8192);
+    if (!body) return sendJson(res, 400, { error: 'a JSON body' });
+    if (verb === 'unsubscribe') return sendJson(res, 200, { removed: webPush.unsubscribe(String(body.endpoint ?? '')) });
+    try {
+      const devices = webPush.subscribe(body);
+      log(`${user} turned on notifications for a device (${devices} in all)`);
+      return sendJson(res, 200, { devices });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+
   /** Routes one authenticated request. */
   async function route(req, res, user) {
     const url = new URL(req.url, 'http://ui');
@@ -442,8 +474,9 @@ export function createApp(deps) {
       return page(res, user, 'Approvals', approvalsPage(all, Boolean(gateways?.configured), displayZone, Boolean(chats)), 'app.js', 'approvals');
     }
     if (req.method === 'GET' && path === '/connections') {
-      return page(res, user, 'Connections', connectionsPage(gateways?.configured ? gateways.list : []), 'connections.js', 'connections');
+      return page(res, user, 'Connections', connectionsPage(gateways?.configured ? gateways.list : [], Boolean(webPush)), 'connections.js', 'connections');
     }
+    if (path === '/api/push' || path.startsWith('/api/push/')) return pushApi(req, res, user, path);
     const account = path.match(/^\/api\/gateways\/([a-z0-9-]+)\/(account|login)$/);
     if (account) return gatewayAccount(req, res, user, account[1], account[2]);
     if (path === '/api/chats' || path.startsWith('/api/chats/')) return chatApi(req, res, path);

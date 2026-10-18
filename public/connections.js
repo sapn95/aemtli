@@ -2,9 +2,11 @@
 // is, and starts a new one where the owner asks for it. A device-code login
 // shows the page to open and the code to enter there; the page then asks
 // again every ten seconds until the login is there or the code has run out.
-// Everything the gateways say is set with textContent only.
+// Everything the gateways say is set with textContent only. Below the
+// gateways, push.js turns notifications on this device on and off.
 
 import { registerServiceWorker } from './install.js';
+import { setUpPush } from './push.js';
 
 registerServiceWorker();
 
@@ -119,3 +121,6 @@ for (const row of document.querySelectorAll('.connection')) {
   button.addEventListener('click', () => login(row, button));
   check(row);
 }
+
+const push = document.querySelector('.push[data-push]');
+if (push) setUpPush(push);

@@ -32,6 +32,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # Jobs hand their pushes in here (NOTIFY_PORT); not the tunnel's.
+            - name: notify
+              containerPort: 8082
           envFrom:
             # AUTH_MODE, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, ALLOWED_EMAILS,
             # PUBLIC_ORIGIN.
@@ -61,6 +64,14 @@ spec:
               value: /state
             - name: NOTIFY_STATE_FILE
               value: /state/notified.json
+            - name: VAPID_PRIVATE_KEY_FILE
+              value: /secrets/vapid/key.pem
+            - name: PUSH_FILE
+              value: /state/push-subscriptions.json
+            - name: NOTIFY_PORT
+              value: "8082"
+            - name: NOTIFY_TOKEN_FILE
+              value: /secrets/notify/token
           readinessProbe:
             httpGet:
               path: /healthz
@@ -94,6 +105,12 @@ spec:
             - name: ntfy
               mountPath: /secrets/ntfy
               readOnly: true
+            - name: vapid
+              mountPath: /secrets/vapid
+              readOnly: true
+            - name: notify
+              mountPath: /secrets/notify
+              readOnly: true
             - name: state
               mountPath: /state
       volumes:
@@ -104,7 +121,8 @@ spec:
         - name: recipes
           configMap:
             name: aemtli-recipes
-        # Both optional: without gateways or ntfy the UI runs as before.
+        # All optional: without gateways, ntfy, a VAPID key (Web Push) or a
+        # notify token (the jobs' way to push) the UI runs without them.
         - name: gateway-tokens
           secret:
             secretName: aemtli-gateway-tokens
@@ -113,6 +131,16 @@ spec:
         - name: ntfy
           secret:
             secretName: aemtli-ntfy
+            defaultMode: 0440
+            optional: true
+        - name: vapid
+          secret:
+            secretName: aemtli-vapid
+            defaultMode: 0440
+            optional: true
+        - name: notify
+          secret:
+            secretName: aemtli-notify
             defaultMode: 0440
             optional: true
         - name: state
@@ -130,3 +158,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    - name: notify
+      port: 8082
+      targetPort: notify

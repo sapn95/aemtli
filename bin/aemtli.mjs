@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ämtli: `aemtli run <recipe>` in a CronJob, `aemtli web` for the UI.
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { runRecipe } from '../src/run/runner.mjs';
 import { runJob } from '../src/run/job.mjs';
@@ -17,6 +17,8 @@ import { createGitHub, githubTools } from '../src/mcp/github.mjs';
 import { createAppAuth } from '../src/mcp/github-app.mjs';
 import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
+import { createWebPush, loadVapidKey } from '../src/web/webpush.mjs';
+import { createNotify, startNotifyServer } from '../src/web/notify.mjs';
 
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const env = process.env;
@@ -142,16 +144,36 @@ async function web() {
     console.error(err.message);
     process.exit(2);
   }
-  let push = () => Promise.resolve(false);
+  // The ways a push goes out: Web Push to the devices that turned it on,
+  // and ntfy where it is set up. Either is optional.
+  const channels = [];
   if (env.NTFY_URL) {
     const ntfy = new URL(env.NTFY_URL);
-    push = createPush({
+    channels.push(createPush({
       ntfyUrl: ntfy.origin + ntfy.pathname.replace(/\/$/, ''),
       topic: required('NTFY_TOPIC'),
       token: readFileSync(required('NTFY_TOKEN_FILE'), 'utf8').trim(),
       log,
-    });
+    }));
   }
+  // Web Push is on when its key is there: the secret is optional, like ntfy's.
+  let webPush = null;
+  if (env.VAPID_PRIVATE_KEY_FILE && !existsSync(env.VAPID_PRIVATE_KEY_FILE)) log(`no VAPID key at ${env.VAPID_PRIVATE_KEY_FILE}: Web Push is off`);
+  else if (env.VAPID_PRIVATE_KEY_FILE) {
+    try {
+      webPush = createWebPush({
+        vapid: loadVapidKey(readFileSync(env.VAPID_PRIVATE_KEY_FILE, 'utf8')),
+        subject: env.VAPID_SUBJECT || publicOrigin,
+        file: env.PUSH_FILE ?? `${env.STATE_DIR || env.DATA_DIR || '/data'}/push-subscriptions.json`,
+        log,
+      });
+    } catch (err) {
+      console.error(`Web Push: ${err.message}`);
+      process.exit(2);
+    }
+    channels.push(async message => (await webPush.send(message)) > 0);
+  }
+  const push = createNotify(channels, log);
   // The chat broker holds the conversation with goose serve, so a turn goes
   // on when the browser goes away. goose takes the secret as ?token=.
   const secret = env.GOOSE_SERVER__SECRET_KEY;
@@ -165,18 +187,25 @@ async function web() {
     log,
     render: renderMarkdown,
   }) : null;
-  if (env.NTFY_URL) {
-    if (!gateways.configured) log('NTFY_URL is set but there are no GATEWAYS to watch');
-    const ntfy = new URL(env.NTFY_URL);
+  if (channels.length && gateways.configured) {
     createNotifier({
       client: gateways,
-      ntfyUrl: ntfy.origin + ntfy.pathname.replace(/\/$/, ''),
-      topic: required('NTFY_TOPIC'),
-      token: readFileSync(required('NTFY_TOKEN_FILE'), 'utf8').trim(),
+      push,
       stateFile: env.NOTIFY_STATE_FILE ?? `${env.DATA_DIR ?? '/data'}/notified.json`,
       clickUrl: publicOrigin ? `${publicOrigin}/#needs` : undefined,
       log,
     }).start();
+  }
+  // The jobs' way to push: they run in pods of their own (see notify.mjs).
+  if (env.NOTIFY_PORT && !existsSync(required('NOTIFY_TOKEN_FILE'))) log(`no token at ${env.NOTIFY_TOKEN_FILE}: the notify port stays closed`);
+  else if (env.NOTIFY_PORT) {
+    const notifyServer = await startNotifyServer({
+      notify: push,
+      token: readFileSync(required('NOTIFY_TOKEN_FILE'), 'utf8').trim(),
+      port: Number(env.NOTIFY_PORT),
+      log,
+    });
+    log(`notify port on ${notifyServer.address().port}`);
   }
   const server = await startServer({
     k8s: createK8s(env.K8S_BASE_URL ? { baseUrl: env.K8S_BASE_URL, namespace: env.K8S_NAMESPACE, token: env.K8S_TOKEN } : undefined),
@@ -188,11 +217,12 @@ async function web() {
     allowedOrigin: publicOrigin,
     verify,
     chats,
+    webPush,
     version,
     log,
   }, { port: Number(env.PORT ?? 8080), host: env.HOST ?? '0.0.0.0' });
   const address = server.address();
-  log(`ämtli ${version} on ${address.address}:${address.port}, auth ${authMode}, chat ${chats ? 'on' : 'off'}`);
+  log(`ämtli ${version} on ${address.address}:${address.port}, auth ${authMode}, chat ${chats ? 'on' : 'off'}, web push ${webPush ? `on (${webPush.count()} devices)` : 'off'}, ntfy ${env.NTFY_URL ? 'on' : 'off'}`);
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.on(signal, () => {
       server.close(() => process.exit(0));

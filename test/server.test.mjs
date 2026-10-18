@@ -37,7 +37,7 @@ function fakeK8s({ running = false, fail = false, schedule = '13 8 * * 1', creat
 }
 
 /** Starts the UI against temp dirs; `body` gets a request helper. */
-async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, stateDir = true, chats = null, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
+async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', moreRuns = [], fixtureRun = true, stateDir = true, chats = null, webPush = null, verify = async t => { if (t !== 'good') throw new Error('no'); return { email: 'owner@example.com' }; }, proxy } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aemtli-ui-'));
   const recipesDir = join(root, 'recipes');
   const dataDir = join(root, 'data');
@@ -52,10 +52,10 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
     writeJsonAtomic(join(createRunDir(dataDir, 'hello', id), 'run.json'), { recipe: 'hello', id, status: 'succeeded', trigger, startedAt, durationMs: 1000 });
   }
   const lines = [];
-  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, chats, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
+  const server = await startServer({ k8s, dataDir, recipesDir, verify, proxy, allowedOrigin: ORIGIN, version: '0.0.0-test', timeZone: 'Europe/Zurich', stateDir: stateDir ? join(root, 'state') : null, chats, webPush, log: l => lines.push(l), now: () => new Date(now) }, { port: 0, host: '127.0.0.1' });
   const port = server.address().port;
   /** One request; `token` null means no Access header, `raw` keeps the body as bytes. */
-  const call = (path, { method = 'GET', token = 'good', headers = {}, raw = false } = {}) => new Promise((resolve, reject) => {
+  const call = (path, { method = 'GET', token = 'good', headers = {}, raw = false, body: sent } = {}) => new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path, method, headers: { ...(token ? { 'cf-access-jwt-assertion': token } : {}), ...headers } }, res => {
       const parts = [];
       res.on('data', c => { parts.push(c); });
@@ -63,7 +63,7 @@ async function withUi(body, { k8s = fakeK8s(), now = '2026-10-11T12:00:00Z', mor
     });
     req.on('upgrade', (res, socket) => { socket.destroy(); resolve({ status: 101 }); });
     req.on('error', reject);
-    req.end();
+    req.end(sent);
   });
   try {
     await body({ call, k8s, lines, port, root });
@@ -612,3 +612,61 @@ test('a run\'s answer is not the result of a held call: no class shared, no box 
     assert.match(css, /\.args pre, \.call-result \{/);
     assert.doesNotMatch(css, /(^|[\s,])\.result[\s,{]/m, 'no rule for .result alone, which the answer carries');
   }));
+
+test('notifications on this device: the Connections page offers them, and the API keeps subscriptions same-origin only', async () => {
+  const kept = [];
+  const sent = [];
+  const webPush = {
+    publicKey: 'BPublicKey',
+    count: () => kept.length,
+    subscribe(sub) {
+      if (!String(sub.endpoint).startsWith('https://fcm.googleapis.com/')) throw new Error('example.com is not a push service this server sends to');
+      kept.push(sub.endpoint);
+      return kept.length;
+    },
+    unsubscribe: endpoint => kept.includes(endpoint) && Boolean(kept.splice(kept.indexOf(endpoint), 1)),
+    send: async message => { sent.push(message); return kept.length; },
+  };
+  await withUi(async ({ call, lines }) => {
+    const page = (await call('/connections')).body;
+    assert.match(page, /<section class="push" aria-labelledby="push-title" data-push="on">/);
+    assert.match(page, /<button type="button" id="push-on" hidden>Turn on<\/button>/);
+    assert.match(page, /No gateways yet/, 'and the gateways part still says there are none');
+    const script = await call('/static/push.js');
+    assert.equal(script.status, 200);
+    assert.equal(script.headers['cache-control'], 'no-cache', 'an imported script is asked for again each time');
+    assert.match((await call('/static/connections.js')).body, /import \{ setUpPush \} from '\.\/push\.js';/);
+    const badge = await call('/static/icons/badge-96.png', { raw: true });
+    assert.equal(badge.status, 200);
+    assert.equal(badge.headers['content-type'], 'image/png');
+
+    assert.deepEqual(JSON.parse((await call('/api/push')).body), { enabled: true, publicKey: 'BPublicKey', devices: 0 });
+    assert.equal((await call('/api/push', { method: 'POST' })).status, 405);
+    assert.equal((await call('/api/push/nothing', { method: 'POST' })).status, 404);
+    const same = { 'sec-fetch-site': 'same-origin', origin: ORIGIN, 'content-type': 'application/json' };
+    const post = (verb, body, headers = same) => call(`/api/push/${verb}`, { method: 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const phone = { endpoint: 'https://fcm.googleapis.com/fcm/send/phone', keys: { p256dh: 'x', auth: 'y' } };
+    assert.equal((await post('subscribe', phone, { ...same, 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await post('subscribe', phone, { ...same, origin: 'https://evil.example' })).status, 403);
+    assert.equal((await call('/api/push/subscribe', { headers: same })).status, 405);
+    assert.equal(kept.length, 0, 'nothing kept from another site');
+    const bad = await post('subscribe', { endpoint: 'https://example.com/x' });
+    assert.deepEqual([bad.status, JSON.parse(bad.body).error], [400, 'example.com is not a push service this server sends to']);
+    assert.equal((await call('/api/push/subscribe', { method: 'POST', headers: same, body: '{' })).status, 400);
+    assert.deepEqual(JSON.parse((await post('subscribe', phone)).body), { devices: 1 });
+    assert.ok(lines.some(l => /owner@example\.com turned on notifications for a device \(1 in all\)/.test(l)));
+    assert.deepEqual(JSON.parse((await post('test', {})).body), { delivered: 1 });
+    assert.deepEqual(sent, [{ title: 'ämtli', message: 'Notifications reach this device.', click: '/connections' }]);
+    assert.equal((await post('test', {}, { ...same, 'sec-fetch-site': 'cross-site' })).status, 403, 'nor a test from another site');
+    assert.deepEqual(JSON.parse((await post('unsubscribe', { endpoint: phone.endpoint })).body), { removed: true });
+    assert.deepEqual(JSON.parse((await post('unsubscribe', { endpoint: phone.endpoint })).body), { removed: false });
+    assert.equal((await call('/api/push', { token: null })).status, 403, 'behind Access like everything');
+  }, { webPush });
+
+  await withUi(async ({ call }) => {
+    assert.deepEqual(JSON.parse((await call('/api/push')).body), { enabled: false });
+    assert.match((await call('/connections')).body, /Web Push is not set up on the server \(<code>VAPID_PRIVATE_KEY_FILE<\/code>\)/);
+    const res = await call('/api/push/test', { method: 'POST', headers: { 'sec-fetch-site': 'same-origin', origin: ORIGIN } });
+    assert.equal(res.status, 503);
+  });
+});

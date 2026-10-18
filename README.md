@@ -136,6 +136,29 @@ bypass for `/static/icons/*` and `/manifest.webmanifest` together with the
 server letting exactly those two through, which it does not do. Neither
 holds anything private.
 
+## Notifications
+
+A push goes out for a call held for your approval, for a question goose
+asks in the chat or an answer nobody waited for, and for whatever a job
+reports with `ctx.notify`. It can go two ways, and either is optional:
+
+- **Web Push**, straight to the installed app. Turn it on for each device
+  on the Connections page; on an iPhone that works only in the app added to
+  the home screen. The server encrypts each message for the device (RFC
+  8291) and signs its request with a VAPID key (RFC 8292), so the push
+  service in between sees that something was sent, never what. It posts only
+  to the push services of Chrome, Firefox, Safari and Edge, whatever a
+  subscription names. A push service that says a device is gone has it
+  dropped. Make the key once with
+  `openssl ecparam -name prime256v1 -genkey -noout -out key.pem` and give
+  the web pod its path in `VAPID_PRIVATE_KEY_FILE`.
+- **ntfy**, through an ntfy server and its app, with `NTFY_URL`.
+
+A job runs in a pod of its own, without the key or the subscriptions. It
+hands its push to the web pod's notify port (`NOTIFY_PORT`) with a token,
+and the web pod sends it on both ways. The tunnel does not reach that port,
+and the network policy lets only the job pods in.
+
 ## Jobs: code first, the model where it pays
 
 Most chores are the same steps every time: fetch, filter, file by a rule.
@@ -162,10 +185,12 @@ export default async function (ctx) {
   Approvals apply as they do for agents. A gateway that is not up yet
   (refused, or no address) is waited for, up to three minutes: gateways
   restart with every image and install their server first.
-- `ctx.notify({ title, message })` sends one push through ntfy, for a run
-  worth a look on a phone. It needs `NTFY_URL`, `NTFY_TOPIC` and
-  `NTFY_TOKEN_FILE` in the run's pod; without them it says so in the log and
-  returns false, and a refused push never fails the run.
+- `ctx.notify({ title, message })` sends one push, for a run worth a look
+  on a phone (see Notifications). With `NOTIFY_URL` and `NOTIFY_TOKEN_FILE`
+  it goes through the web pod, which sends it on by Web Push and ntfy;
+  without them, straight to ntfy with `NTFY_URL`, `NTFY_TOPIC` and
+  `NTFY_TOKEN_FILE`. With neither it says so in the log and returns false,
+  and a push that does not go out never fails the run.
 - `ctx.pdfText(bytes)` returns a PDF's text as `pdftotext -layout` lays it
   out (poppler is in the image), for lists and letters parsed in code.
 - `ctx.qr(bytes)` returns the text of the QR codes on a PDF's first eight
@@ -216,8 +241,8 @@ behind its own `aemtli mcp-gateway`:
   Approvals page. Approve runs the call in a fresh process and shows what
   came back; Reject records that nothing ran. Nobody deciding for seven days
   expires it.
-- With `NTFY_URL` set, the UI sends one push per held call: the gateway's
-  name and the tool, never the arguments.
+- With Web Push or ntfy set up, the UI sends one push per held call: the
+  gateway's name and the tool, never the arguments.
 - A decision can carry a word to goose: the box beside Approve and Reject
   goes into a conversation once the call is decided, so a call rejected for
   the wrong date is corrected in the same breath. The decision stands even
@@ -435,7 +460,11 @@ made again.
 | `DISPLAY_TIME_ZONE` | `UTC` | the zone the dashboard shows times and weeks in, e.g. `Europe/Zurich` |
 | `GATEWAYS` | | JSON: `[{"name":"epost","title":"ePost","url":"http://aemtli-mcp-epost:8081","mcp":"http://aemtli-mcp-epost:8080/mcp"}]`. `url` is the approvals port; with `mcp`, every chat session gets the gateway as a tool server |
 | `GATEWAY_TOKENS_DIR` | | one file per gateway, named after it, with its approvals token. A gateway with `"tokenFile": "/abs/path"` in `GATEWAYS` reads its token from there instead |
-| `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | where held calls are pushed; without `NTFY_URL`, no pushes |
+| `VAPID_PRIVATE_KEY_FILE` | | the Web Push key (PEM, P-256); without the file, no Web Push |
+| `VAPID_SUBJECT` | `PUBLIC_ORIGIN` | a `mailto:` address or `https://` URL the push services can reach you at |
+| `PUSH_FILE` | `$STATE_DIR/push-subscriptions.json` | the devices that turned Web Push on |
+| `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN_FILE` | | pushes also go to ntfy; optional |
+| `NOTIFY_PORT`, `NOTIFY_TOKEN_FILE` | | the port where jobs hand in a push, and its token; without the file the port stays closed |
 | `NOTIFY_STATE_FILE` | `$DATA_DIR/notified.json` | which held calls were pushed already |
 | `STATE_DIR` | | where the UI keeps the favourite chores and which conversations are archived; without it there are neither |
 
@@ -460,8 +489,10 @@ identity `KANBAN_AS` and `KANBAN_USER_HEADER`.
 `aemtli job`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER`, `AEMTLI_KEEP_RUNS`,
 `MCP_GATEWAYS` (JSON: `{"epost":"http://aemtli-mcp-epost:8080/mcp"}`),
 `ANTHROPIC_HOST` with a placeholder `ANTHROPIC_API_KEY` for the proxy, and
-for `ctx.notify` the same `NTFY_URL`, `NTFY_TOPIC` and `NTFY_TOKEN_FILE` the
-UI uses, plus `PUBLIC_ORIGIN` for the link a push carries and
+for `ctx.notify` either `NOTIFY_URL` (the web pod's notify port, e.g.
+`http://aemtli-web:8082/notify`) with `NOTIFY_TOKEN_FILE`, or the same
+`NTFY_URL`, `NTFY_TOPIC` and `NTFY_TOKEN_FILE` the UI uses, plus
+`PUBLIC_ORIGIN` for the link a push carries and
 `KANBAN_PUBLIC_URL` for the one a card carries.
 
 `aemtli run`: `RECIPES_DIR`, `DATA_DIR`, `AEMTLI_TRIGGER` (`schedule` or

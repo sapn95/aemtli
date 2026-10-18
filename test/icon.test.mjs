@@ -51,8 +51,8 @@ test('a PNG holds exactly the pixels it was given', () => {
 });
 
 test('every icon has its size, and only full-bleed ones are opaque to the corner', () => {
-  assert.deepEqual(Object.keys(ICONS).sort(), ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png']);
-  for (const [name, spec] of Object.entries(ICONS)) {
+  assert.deepEqual(Object.keys(ICONS).sort(), ['apple-touch-icon.png', 'badge-96.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png']);
+  for (const [name, spec] of Object.entries(ICONS).filter(([, spec]) => !spec.badge)) {
     const { width, height, at } = decode(iconPng(name));
     assert.deepEqual([width, height], [spec.size, spec.size], name);
     assert.equal(at(0, 0)[3], spec.bleed ? 255 : 0, `${name}: corner`);
@@ -82,6 +82,14 @@ test('the tick is blue where icon.svg draws it, and stays in a maskable icon\'s 
   }
   assert.equal(outside, 0);
   assert.ok(inside > 1000, 'and the tick is there');
+});
+
+test('the notification badge is the tick alone, white on nothing', () => {
+  const badge = decode(iconPng('badge-96.png'));
+  assert.deepEqual([badge.width, badge.height], [96, 96]);
+  assert.equal(badge.at(0, 0)[3], 0, 'no paper in the corner');
+  assert.equal(badge.at(48, 4)[3], 0, 'nor above the tick');
+  assert.deepEqual(badge.at(Math.round(13 / 32 * 96), Math.round(22.5 / 32 * 96)), [255, 255, 255, 255], 'the bend of the tick');
 });
 
 test('an icon is drawn once, and only the names listed are drawn at all', () => {
