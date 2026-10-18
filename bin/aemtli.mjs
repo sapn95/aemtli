@@ -15,6 +15,7 @@ import { createKanban, kanbanTools } from '../src/mcp/kanban.mjs';
 import { createRecipes, recipeTools } from '../src/mcp/recipes.mjs';
 import { createGitHub, githubTools } from '../src/mcp/github.mjs';
 import { createAppAuth } from '../src/mcp/github-app.mjs';
+import { createTransport, transportTools } from '../src/mcp/transport.mjs';
 import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 import { createWebPush, loadVapidKey } from '../src/web/webpush.mjs';
@@ -56,6 +57,7 @@ const USAGE = `ämtli ${version}
   aemtli mcp-kanban                            the kanban board as an MCP server on stdio, for a gateway
   aemtli mcp-recipes                           the chores in git as an MCP server on stdio, for a gateway
   aemtli mcp-github                            the owner's repositories as an MCP server on stdio, for a gateway
+  aemtli mcp-transport                         Swiss public transport timetables as an MCP server on stdio, for a gateway
 
 Settings come from the environment; see the README.`;
 
@@ -374,6 +376,16 @@ async function mcpGitHub() {
   await serveStdio({ name: 'aemtli-github', version, tools: githubTools(github) });
 }
 
+/**
+ * `aemtli mcp-transport`: stations, connections and departure boards from
+ * transport.opendata.ch as MCP tools on stdio. It needs no key; TRANSPORT_API
+ * points it at another address of the same API. A gateway runs it; stdout is
+ * the protocol, so nothing else may go there.
+ */
+async function mcpTransport() {
+  await serveStdio({ name: 'aemtli-transport', version, tools: transportTools(createTransport({ baseUrl: env.TRANSPORT_API || undefined })) });
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'job') await job(rest);
@@ -383,6 +395,7 @@ else if (command === 'mcp-gateway') await mcpGateway();
 else if (command === 'mcp-kanban') await mcpKanban();
 else if (command === 'mcp-recipes') await mcpRecipes();
 else if (command === 'mcp-github') await mcpGitHub();
+else if (command === 'mcp-transport') await mcpTransport();
 else {
   console.log(USAGE);
   process.exit(command === '--help' || command === undefined ? 0 : 2);
