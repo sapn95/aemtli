@@ -238,7 +238,9 @@ a.mark:hover { text-decoration: underline; }
 .ask .tool { font: 0.8125rem ui-monospace, "SF Mono", Menlo, monospace; color: var(--pencil); margin-left: 0.3rem; }
 .hidden-char { color: var(--redpen); border: 1px solid currentColor; border-radius: 3px; padding: 0 0.2rem; font-size: 0.75em; }
 .args { margin: 0.6rem 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 1rem; }
-.args div { display: contents; }
+/* Only the rows: a code box further down keeps its box, or its Copy button
+   is placed against the page. */
+.args > div { display: contents; }
 .args dt { color: var(--pencil); }
 .args dd { margin: 0; overflow-wrap: anywhere; }
 /* .call-result, not .result: the run page's answer is a section.result, and
@@ -502,8 +504,10 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
 @media (max-width: 760px) {
   .top { gap: 1rem; flex-wrap: wrap; }
   /* The search takes its own line under the heading. */
-  .find { margin-left: 0; flex-basis: 100%; }
-  .find input { flex: 1; width: auto; min-width: 0; }
+  .find { margin-left: 0; flex-basis: 100%; min-width: 0; flex-wrap: wrap; row-gap: 0.25rem; }
+  /* The search keeps a usable width; what does not fit beside it (Reload,
+     in the home-screen app) goes to the next line. */
+  .find input { flex: 1 1 11rem; width: auto; min-width: 0; }
   .who { display: none; }
   h1 { font-size: 1.6rem; }
 
