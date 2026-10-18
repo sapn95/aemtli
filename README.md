@@ -413,11 +413,11 @@ key, PEM), and for a different host `GITHUB_API`.
 ## The kanban board
 
 `aemtli mcp-kanban` works with [byge](https://github.com/sapn95/byge) only,
-the fork of golang-kanban v2 that ämtli's owner runs. It does what a person
-does on the board, posting byge's forms and reading its pages, from inside
-the cluster, so goose and the jobs can read the board and keep cards on it.
-It relies on byge's markup and on byge's service identity, so upstream
-golang-kanban or another fork will not work with it:
+the fork of golang-kanban v2 that ämtli's owner runs. It talks to byge's JSON
+API under `/api/v1` from inside the cluster, so goose and the jobs can read
+the board and keep cards on it. It needs byge v2.17 or later, the first
+release with a service identity; upstream golang-kanban and other forks have
+neither the API nor the identity.
 
 | Tool | |
 | --- | --- |
@@ -426,18 +426,29 @@ golang-kanban or another fork will not work with it:
 | `kanban_archive_card`, `kanban_restore_card` | archive and undo it |
 | `kanban_create_board` | add a board, or get the one with that name |
 
-There is no tool to delete a card, a column or a board; that stays in the
-browser.
+A card id is byge's own, 26 letters and digits. There is no tool to delete a
+card, a column or a board; that stays in the browser.
 
-The pages are read as the byge release the cluster runs renders them, and
-the tests read pages recorded from that release (`test/fixtures/kanban`).
-Record them again when the board moves to another release.
+byge runs with `AUTH_SERVICE_HEADER` and `AUTH_SERVICE_GROUP`. Every request
+from the gateway carries the header named in `KANBAN_USER_HEADER`, with
+`KANBAN_AS` as its value, and byge treats the caller as a member of that
+group. From v2.17 on, byge shows a board only to whom the board grants a
+role. So the owner grants the group (here `aemtli`) write on every board goose
+should use, on the board's access page under Settings. A board without that
+grant is missing from `kanban_list_boards`, and naming it gives an error that
+says what to grant.
 
-The board refuses a cross-site browser post. A request from a server carries
-no `Sec-Fetch-Site` and no `Origin`, so the gateway's posts go through; the
-board's NetworkPolicy is what decides who may reach it. byge knows ämtli as
-a service identity: every request carries `KANBAN_AS` in the header
-`KANBAN_USER_HEADER`, which is byge's `AUTH_SERVICE_HEADER`.
+byge's API has no search across boards. `kanban_search` reads the cards and
+the archive of every board it may read and keeps the cards that have all of
+the words in their title, description or checklist.
+
+The board refuses a cross-site browser write. A request from a server carries
+no `Sec-Fetch-Site` and no `Origin`, so the gateway's requests go through; the
+board's NetworkPolicy is what decides who may reach it.
+
+The tests run against byge's API kept in memory (`test/fixtures/fake-byge.mjs`),
+with byge's field names. Like byge, it refuses a body with a field it does not
+know.
 
 A job finds its cards again by a reference at the end of the description,
 `[ämtli:<ref>]`. A card the owner archived counts as dealt with and is not
@@ -505,7 +516,8 @@ its credentials.
 
 `aemtli mcp-kanban`: `KANBAN_URL` (the byge board inside the cluster, e.g.
 `http://kanban.kanban.svc.cluster.local:17808`), and for byge's service
-identity `KANBAN_AS` and `KANBAN_USER_HEADER`.
+identity `KANBAN_USER_HEADER` (byge's `AUTH_SERVICE_HEADER`) and `KANBAN_AS`
+(the group in byge's `AUTH_SERVICE_GROUP`, which each board grants).
 
 `aemtli mcp-transport` needs no setting. `TRANSPORT_API` points it at
 another address of the same API (`https://transport.opendata.ch/v1`).

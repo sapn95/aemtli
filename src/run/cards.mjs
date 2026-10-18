@@ -38,8 +38,8 @@ export function jobCards(client, { board = 'Ämtli', baseUrl = '', log = () => {
 
   /**
    * Where a card is to be found, for a person: the board page with the card
-   * as its anchor. Null without a public address, and for a card in the
-   * archive, which has no anchor of its own.
+   * as its anchor. Null without a public address or a card id. A card in the
+   * archive has no anchor on the board, so ensure() gives it none.
    */
   async function url(id) {
     if (!baseUrl || !id) return null;
@@ -56,7 +56,7 @@ export function jobCards(client, { board = 'Ämtli', baseUrl = '', log = () => {
      */
     async ensure(ref, { title, description = '', due, subtasks, column }) {
       const [there] = await find(ref);
-      if (there) return { id: there.id, created: false, archived: there.archived, url: await url(there.id) };
+      if (there) return { id: there.id, created: false, archived: there.archived, url: there.archived ? null : await url(there.id) };
       const card = await client.json('kanban_create_card', {
         board: await slug(),
         title,

@@ -1,131 +1,80 @@
 // The kanban board, for goose and the jobs. It works with byge
-// (github.com/sapn95/byge) only, the owner's fork of golang-kanban v2.
+// (github.com/sapn95/byge) only, the owner's fork of golang-kanban v2, and
+// talks to its JSON API under /api/v1 (byge's internal/api/openapi.json is
+// the contract). Earlier versions read the board's pages; byge v2.18 changed
+// those, and the API is the part it publishes as stable.
 //
-// What a person does on the board is a form post, and what they see is a
-// page rendered from fixed templates; this client posts the same forms and
-// reads the same pages. It is written against the byge release the cluster
-// runs, and a test reads pages that release rendered, so a template change
-// in byge shows up as a failing test before it reaches the board.
+// Who is asking: the gateway reaches the board pod to pod, with no Cloudflare
+// assertion, and carries byge's service header (AUTH_SERVICE_HEADER) instead.
+// From byge v2.17 the board enforces grants, and that header makes the caller
+// a member of one group (AUTH_SERVICE_GROUP). The caller sees and changes only
+// the boards that grant that group a role, which the owner gives on each
+// board's access page. A board without that grant is invisible here, so a
+// missing board says how to grant it.
 //
 // The board refuses a cross-site browser post (Sec-Fetch-Site, Origin). A
 // request from a server carries neither header and is let through; the
 // NetworkPolicy in front of the board is what keeps everything else out.
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+// byge's ids are 26 lower-case base32 characters; anything else is refused
+// before it goes into a path.
+const ID = /^[a-z0-9]{1,64}$/i;
+const MAX_HITS = 100;
 
-/** HTML text or an attribute value, as html/template escaped it, back to text. */
-export function decode(s) {
-  return String(s ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
-    if (e[0] !== '#') return ENTITIES[e.toLowerCase()] ?? m;
-    const code = e[1].toLowerCase() === 'x' ? Number.parseInt(e.slice(2), 16) : Number(e.slice(1));
-    return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-  });
-}
+const byPosition = (a, b) => (a.position ?? 0) - (b.position ?? 0);
 
-/** The text of a piece of HTML: tags out, entities decoded. */
-const textOf = html => decode(String(html ?? '').replace(/<[^>]*>/g, '')).trim();
+/** The checklist as the tools show it: in order, done or not, and its text. */
+const checklist = card => [...(card.subtasks ?? [])].sort(byPosition).map(s => ({ done: Boolean(s.done), text: s.title }));
 
-const first = (re, s) => re.exec(s)?.[1];
-
-/** The front page: every board with its slug and how many cards it holds. */
-export function parseBoards(html) {
-  return [...html.matchAll(/<a class="board-link" href="\/b\/([^"]+)">([^<]*)<\/a>\s*<span class="board-meta">(\d+) card/g)]
-    .map(([, slug, name, cards]) => ({ slug: decode(slug), name: decode(name), cards: Number(cards) }));
-}
-
-/** One card as the board shows it. `chunk` starts right after `id="card-`. */
-function parseCardFace(chunk) {
-  const subtasks = [];
-  const list = first(/<ul class="subtasks">([\s\S]*?)<\/ul>/, chunk) ?? '';
-  // Each line is a form asking for the opposite of its state: done=0 on a
-  // line that is done.
-  for (const [, text, done] of list.matchAll(/name="text" value="([^"]*)">\s*<input type="hidden" name="done" value="([01])">/g)) {
-    subtasks.push({ done: done === '0', text: decode(text) });
-  }
+/** A card as the tools show it, from byge's card. */
+function face(card) {
   return {
-    id: Number(first(/^(\d+)/, chunk)),
-    title: textOf(first(/<h5 class="card-title">([\s\S]*?)<\/h5>/, chunk)),
-    description: textOf(first(/<p class="card-desc">([\s\S]*?)<\/p>/, chunk)),
-    due: first(/title="Due (\d{4}-\d{2}-\d{2})"/, chunk) ?? null,
-    assignee: decode(first(/title="Assigned to ([^"]*)"/, chunk) ?? '') || null,
-    subtasks,
+    id: card.id,
+    title: card.title ?? '',
+    description: card.description ?? '',
+    due: card.due_date || null,
+    assignee: card.assignee || null,
+    subtasks: checklist(card),
   };
 }
 
-/** A board page: its name and its columns, left to right, with their cards. */
-export function parseBoard(html) {
-  const main = html.slice(html.indexOf('<main class="board"'), html.indexOf('</main>'));
-  const columns = main.split('<section class="lane').slice(1).map(section => ({
-    id: Number(first(/data-tab="(\d+)"/, section)),
-    name: textOf(first(/<h3 class="lane-title">([\s\S]*?)<span/, section)),
-    cards: section.split('<div class="card" id="card-').slice(1).map(parseCardFace),
-  }));
-  return { name: textOf(first(/<h1 class="board-title">([\s\S]*?)<\/h1>/, html)), columns };
-}
-
-/** The edit form of a card: every field as stored, and the columns it can go to. */
-export function parseCardForm(html) {
-  const subtasks = [];
-  for (const [, row] of html.matchAll(/<div class="subtask-row">([\s\S]*?)<\/div>/g)) {
-    subtasks.push({ done: /class="subtask-complete"[^>]*\schecked/.test(row), text: decode(first(/class="subtask-text" value="([^"]*)"/, row) ?? '') });
-  }
-  const select = name => first(new RegExp(`<select name="${name}">([\\s\\S]*?)</select>`), html);
-  const options = s => [...(s ?? '').matchAll(/<option value="([^"]*)"( selected)?>([^<]*)<\/option>/g)].map(([, value, selected, label]) => ({ value: decode(value), selected: Boolean(selected), label: decode(label) }));
-  const lanes = options(select('lane'));
-  const assignee = select('assignee');
-  const current = lanes.find(o => o.selected);
-  return {
-    id: Number(first(/hx-post="\/card\/(\d+)\/update"/, html)),
-    title: decode(first(/name="title" value="([^"]*)"/, html) ?? ''),
-    description: decode(first(/<textarea name="description"[^>]*>([\s\S]*?)<\/textarea>/, html) ?? ''),
-    due: first(/name="due" value="([^"]*)"/, html) || null,
-    subtasks,
-    // A board with a single column has no column field in the form.
-    column: current?.label ?? null,
-    columnId: current ? Number(current.value) : null,
-    columns: lanes.map(o => ({ id: Number(o.value), name: o.label })),
-    // Present only when the board knows who is signed in; null otherwise.
-    assignee: assignee === undefined ? undefined : options(assignee).find(o => o.selected)?.value ?? '',
-  };
-}
-
-/** Search results: title, where the card is, and its id while it is on a board. */
-export function parseSearch(html) {
-  return [...html.matchAll(/<a class="board-link" href="\/b\/([^"#/]+)(?:#card-(\d+)|\/archive)">([^<]*)<\/a>\s*<span class="board-meta">([\s\S]*?)<\/span>\s*<\/div>/g)]
-    .map(([, slug, id, title, meta]) => {
-      const where = textOf(meta);
-      const [board, rest = ''] = where.split(' › ');
-      const [column] = rest.split(' · ');
-      return { id: id ? Number(id) : null, title: decode(title), board: slug, boardName: board, column, archived: !id };
+/**
+ * A checklist given to a tool, as byge takes it: a string is an open item,
+ * whitespace is folded, empty lines go. An item with the text of one already
+ * on the card keeps that one's id, so the board keeps it as the same line.
+ */
+export function toSubtasks(list, existing = []) {
+  const unused = [...existing];
+  return (list ?? [])
+    .map(s => (typeof s === 'string' ? { done: false, text: s } : s))
+    .map(s => ({ done: Boolean(s.done), title: String(s.text ?? '').split(/\s+/).filter(Boolean).join(' ') }))
+    .filter(s => s.title)
+    .map(s => {
+      const at = unused.findIndex(e => e.title === s.title);
+      const [same] = at >= 0 ? unused.splice(at, 1) : [];
+      return { ...(same ? { id: same.id } : {}), title: s.title, done: s.done };
     });
 }
 
-/** Subtasks in the one-line-each form the board stores: "1|done", "0|open". */
-export const formatSubtasks = list => (list ?? [])
-  .map(s => (typeof s === 'string' ? { done: false, text: s } : s))
-  .map(s => ({ done: Boolean(s.done), text: String(s.text ?? '').split(/\s+/).filter(Boolean).join(' ') }))
-  .filter(s => s.text)
-  .map(s => `${s.done ? 1 : 0}|${s.text}`)
-  .join('\n');
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * `baseUrl` is the board's address inside the cluster. `as` and
- * `userHeader` are byge's service identity (its AUTH_SERVICE_HEADER): who
- * the cards are written as, and the header's name.
+ * `userHeader` are byge's service identity: the header's value and its
+ * name. byge reads only that the header is there; `as` names the group it
+ * stands for, which is what the owner grants.
  */
 export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeoutMs = 15_000 }) {
   if (Boolean(as) !== Boolean(userHeader)) throw new Error('KANBAN_AS and KANBAN_USER_HEADER go together: set both or neither');
-  const base = String(baseUrl).replace(/\/+$/, '');
+  const base = `${String(baseUrl).replace(/\/+$/, '')}/api/v1`;
   const identity = as ? { [userHeader]: as } : {};
-  // Calls that read a card and post it back run one after the other per
+  const grantHint = `grant the group ${as ? `"${as}"` : 'of this service'} write on the board's access page (Settings, Access)`;
+  // Calls that read a card and write it back run one after the other per
   // card, so two changes at once cannot undo each other.
   const locks = new Map();
   function oneAtATime(card, fn) {
     let id;
     try {
-      id = cardPath(card);
+      id = cardId(card);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -137,41 +86,72 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
     return run;
   }
 
-  async function send(path, { method = 'GET', form, htmx = false } = {}) {
+  /** One API call; the answer's JSON, or an error with byge's own reason. */
+  async function send(path, { method = 'GET', body } = {}) {
     const res = await fetchImpl(`${base}${path}`, {
       method,
       redirect: 'manual',
-      headers: {
-        ...identity,
-        ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
-        ...(htmx ? { 'hx-request': 'true' } : {}),
-      },
-      body: form ? new URLSearchParams(form).toString() : undefined,
+      headers: { ...identity, accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const body = await res.text();
-    if (res.status >= 400) {
-      const err = new Error(`the board answered ${res.status}: ${body.trim().slice(0, 200) || res.statusText}`);
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    if (res.status >= 300) {
+      const reason = data?.error ? `${data.error}${data.field ? ` (${data.field})` : ''}` : text.trim().slice(0, 200) || res.statusText;
+      const err = new Error(`the board answered ${res.status}: ${reason}${res.status === 403 ? `; ${grantHint}` : ''}`);
       err.status = res.status;
       throw err;
     }
-    return { status: res.status, body, location: res.headers.get('location') };
+    return data;
   }
 
-  const boards = async () => parseBoards((await send('/')).body);
+  const listBoards = async () => (await send('/boards')) ?? [];
+  const cardsOf = slug => send(`/boards/${encodeURIComponent(slug)}/cards`);
+  const archiveOf = slug => send(`/boards/${encodeURIComponent(slug)}/archive`);
 
-  /** A board by slug or by name, or an error that lists the boards there are. */
+  /** Every board this caller may read, with how many cards each holds. */
+  async function boards() {
+    const all = await listBoards();
+    return Promise.all(all.map(async b => ({ slug: b.slug, name: b.name, cards: ((await cardsOf(b.slug)) ?? []).length })));
+  }
+
+  /**
+   * A board by slug or by name, as byge has it (columns in order), or an
+   * error that lists the boards there are and says how to grant one.
+   */
   async function board(which) {
-    const all = await boards();
+    const all = await listBoards();
     const want = String(which ?? '').trim().toLowerCase();
     const hit = all.find(b => b.slug === which) ?? all.find(b => b.name.toLowerCase() === want || b.slug.toLowerCase() === want);
-    if (!hit) throw Object.assign(new Error(`no board "${which}"; there are: ${all.map(b => b.name).join(', ') || 'none'}`), { status: 404 });
-    return hit;
+    if (hit) return { ...hit, columns: [...(hit.columns ?? [])].sort(byPosition) };
+    // Not among the boards it may read: there may still be one by that slug
+    // that grants this caller nothing, and byge says which with 403.
+    let hidden = false;
+    if (want && /^[a-z0-9-]+$/.test(want)) {
+      try {
+        await send(`/boards/${encodeURIComponent(want)}`);
+      } catch (err) {
+        hidden = err.status === 403;
+      }
+    }
+    const there = all.map(b => b.name).join(', ');
+    const why = hidden
+      ? `the board "${which}" is there, but this service may not read it; ${grantHint}`
+      : `no board "${which}" this service may read; there are: ${there || `none. A board shows here once it grants this service: ${grantHint}`}`;
+    throw Object.assign(new Error(why), { status: hidden ? 403 : 404 });
   }
 
-  async function readBoard(which) {
-    const b = await board(which);
-    return { slug: b.slug, ...parseBoard((await send(`/b/${encodeURIComponent(b.slug)}`)).body) };
+  /** The board a card is on, by the card's board id. */
+  async function boardOf(card) {
+    const b = (await listBoards()).find(x => x.id === card.board_id);
+    if (!b) throw Object.assign(new Error(`card ${card.id} is on a board this service may not read; ${grantHint}`), { status: 403 });
+    return { ...b, columns: [...(b.columns ?? [])].sort(byPosition) };
   }
 
   /** A column by id or by name; the first one when none is named (undefined or null). */
@@ -179,129 +159,190 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
     if (!columns.length) throw new Error('the board has no columns');
     if (which === undefined || which === null) return columns[0];
     const want = String(which).trim().toLowerCase();
-    const hit = columns.find(c => String(c.id) === want) ?? columns.find(c => c.name.toLowerCase() === want);
+    const hit = columns.find(c => String(c.id).toLowerCase() === want) ?? columns.find(c => c.name.toLowerCase() === want);
     if (!hit) throw Object.assign(new Error(`no column "${which}"; there are: ${columns.map(c => c.name).join(', ')}`), { status: 404 });
     return hit;
   }
 
-  const cardPath = id => {
-    const n = Number(id);
-    if (!Number.isInteger(n) || n <= 0) throw Object.assign(new Error(`"${id}" is not a card id`), { status: 400 });
-    return `/card/${n}`;
+  const cardId = id => {
+    const s = String(id ?? '').trim();
+    if (!ID.test(s)) throw Object.assign(new Error(`"${id}" is not a card id`), { status: 400 });
+    return s.toLowerCase();
   };
 
-  async function getCard(id) {
+  async function fetchCard(id) {
     try {
-      return parseCardForm((await send(`${cardPath(id)}/edit`)).body);
+      return await send(`/cards/${cardId(id)}`);
     } catch (err) {
-      // The board answers its own 404 for a card that is not there, which
-      // reads like a broken address rather than a wrong number.
-      throw err.status === 404 ? Object.assign(new Error(`no card ${id} on this board`), { status: 404 }) : err;
+      throw err.status === 404 ? Object.assign(new Error(`no card ${id} on the board`), { status: 404 }) : err;
     }
   }
-
-  /** The columns a card can go to; a board with one column has no choice to offer. */
-  const onlyOne = card => {
-    if (!card.columns.length) throw Object.assign(new Error('the board has only one column'), { status: 400 });
-    return card.columns;
-  };
 
   const checkDue = due => {
     if (due && !DATE.test(due)) throw Object.assign(new Error(`"${due}" is not a date (YYYY-MM-DD)`), { status: 400 });
     return due ?? '';
   };
 
+  /** A whole card for PUT: byge replaces every field, so the ones kept go along. */
+  const whole = (card, change = {}) => ({
+    title: change.title ?? card.title ?? '',
+    description: change.description ?? card.description ?? '',
+    due_date: change.due_date ?? card.due_date ?? '',
+    assignee: card.assignee ?? '',
+    labels: card.labels ?? [],
+    subtasks: change.subtasks ?? (card.subtasks ?? []).slice().sort(byPosition).map(s => ({ id: s.id, title: s.title, done: s.done })),
+  });
+
+  /** Puts a card at the end of a column: the column's whole order, the card last. */
+  async function toEnd(b, cardIdValue, target) {
+    const order = ((await cardsOf(b.slug)) ?? [])
+      .filter(c => c.column_id === target.id && c.id !== cardIdValue)
+      .sort(byPosition)
+      .map(c => c.id);
+    await send(`/boards/${encodeURIComponent(b.slug)}/columns/${encodeURIComponent(target.id)}/cards/order`, { method: 'PUT', body: { order: [...order, cardIdValue] } });
+  }
+
+  /** The columns a card can go to; a board with one column has no choice to offer. */
+  const otherColumns = b => {
+    if (b.columns.length < 2) throw Object.assign(new Error('the board has only one column'), { status: 400 });
+    return b.columns;
+  };
+
+  async function readBoard(which) {
+    const b = await board(which);
+    const cards = ((await cardsOf(b.slug)) ?? []).slice().sort(byPosition);
+    return {
+      slug: b.slug,
+      name: b.name,
+      columns: b.columns.map(c => ({ id: c.id, name: c.name, cards: cards.filter(x => x.column_id === c.id).map(face) })),
+    };
+  }
+
+  async function getCard(id) {
+    const card = await fetchCard(id);
+    const b = await boardOf(card);
+    const current = b.columns.find(c => c.id === card.column_id);
+    return {
+      ...face(card),
+      column: current?.name ?? null,
+      columnId: current?.id ?? null,
+      columns: b.columns.map(c => ({ id: c.id, name: c.name })),
+      archived: Boolean(card.archived_at),
+    };
+  }
+
   return {
     boards,
     readBoard,
     getCard,
 
-    /** The hits, and whether the board stopped at its 100. */
+    /**
+     * Cards that have all of the words in their title, description or
+     * checklist, on the board named or on every board this caller may read,
+     * archived ones too. At most 100; truncated says there were more.
+     */
     async search(query, which) {
-      const params = new URLSearchParams({ q: query });
-      if (which) params.set('board', (await board(which)).slug);
-      const { body } = await send(`/search?${params}`);
-      return { hits: parseSearch(body), truncated: /Showing the first \d+/.test(body) };
+      const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      if (!words.length) throw Object.assign(new Error('a search needs at least one word'), { status: 400 });
+      const where = which ? [await board(which)] : (await listBoards()).map(b => ({ ...b, columns: b.columns ?? [] }));
+      const hits = [];
+      for (const b of where) {
+        const [live, archived] = await Promise.all([cardsOf(b.slug), archiveOf(b.slug)]);
+        for (const card of [...(live ?? []).slice().sort(byPosition), ...(archived ?? [])]) {
+          const text = [card.title, card.description, ...(card.subtasks ?? []).map(s => s.title)].join('\n').toLowerCase();
+          if (!words.every(w => text.includes(w))) continue;
+          hits.push({ id: card.id, title: card.title, board: b.slug, boardName: b.name, column: b.columns.find(c => c.id === card.column_id)?.name ?? null, archived: Boolean(card.archived_at) });
+        }
+      }
+      return { hits: hits.slice(0, MAX_HITS), truncated: hits.length > MAX_HITS };
     },
 
     /**
-     * Adds a board, or hands back the one of that name. The board itself
-     * would make a second one with the same name, which a job that runs
-     * every day must not do.
+     * Adds a board, or hands back the one of that name. A job that runs every
+     * day must not make a second one; byge refuses a name that is taken, and
+     * one taken by a board this caller cannot see says how to grant it.
      */
     async createBoard(name) {
-      const there = (await boards()).find(b => b.name.toLowerCase() === String(name).trim().toLowerCase());
+      const want = String(name ?? '').trim();
+      const there = (await listBoards()).find(b => b.name.toLowerCase() === want.toLowerCase());
       if (there) return { slug: there.slug, name: there.name, created: false };
-      const { location } = await send('/boards', { method: 'POST', form: { name } });
-      const slug = decodeURIComponent(first(/^\/b\/([^/?#]+)/, location ?? '') ?? '');
-      return { slug, name: String(name).trim(), created: true };
+      try {
+        const made = await send('/boards', { method: 'POST', body: { name: want } });
+        return { slug: made.slug, name: made.name, created: true };
+      } catch (err) {
+        if (err.status === 409) throw Object.assign(new Error(`a board "${want}" is there, but this service may not read it; ${grantHint}`), { status: 409 });
+        throw err;
+      }
     },
 
     async createCard(which, { title, description = '', due, subtasks, column: lane } = {}) {
-      const b = await readBoard(which);
+      const b = await board(which);
       const target = column(b.columns, lane);
-      const { body } = await send(`/b/${encodeURIComponent(b.slug)}/card`, {
+      const card = await send(`/boards/${encodeURIComponent(b.slug)}/cards`, {
         method: 'POST',
-        htmx: true,
-        form: { title: title ?? '', description, subtasks: formatSubtasks(subtasks), due: checkDue(due), lane: String(target.id) },
+        body: { column_id: target.id, title: title ?? '', description, due_date: checkDue(due), assignee: '', labels: [], subtasks: toSubtasks(subtasks) },
       });
-      const card = parseCardFace(body.slice(body.indexOf('id="card-') + 'id="card-'.length));
-      return { ...card, board: b.slug, column: target.name };
+      return { ...face(card), board: b.slug, column: target.name };
     },
 
     /**
      * Changes the fields given and keeps every other one as it is; a field
-     * that is undefined or null is not given.
+     * that is undefined or null is not given. Naming a column moves the card
+     * to the end of it.
      */
     updateCard(id, change = {}) {
       return oneAtATime(id, async () => {
-        const now = await getCard(id);
-        const form = {
-          title: change.title ?? now.title,
-          description: change.description ?? now.description,
-          subtasks: formatSubtasks(change.subtasks ?? now.subtasks),
-          due: change.due === undefined || change.due === null ? now.due ?? '' : checkDue(change.due),
-        };
-        if (change.column !== undefined && change.column !== null) form.lane = String(column(onlyOne(now), change.column).id);
-        // A board that knows who is signed in clears the assignee of a post
-        // without one, so the one there is sent back.
-        if (now.assignee !== undefined) form.assignee = now.assignee;
-        const { body } = await send(`${cardPath(id)}/update`, { method: 'POST', htmx: true, form });
-        return parseCardFace(body.slice(body.indexOf('id="card-') + 'id="card-'.length));
+        const now = await fetchCard(id);
+        const b = change.column === undefined || change.column === null ? null : await boardOf(now);
+        const target = b ? column(otherColumns(b), change.column) : null;
+        const body = whole(now, {
+          title: change.title ?? undefined,
+          description: change.description ?? undefined,
+          due_date: change.due === undefined || change.due === null ? undefined : checkDue(change.due),
+          subtasks: change.subtasks === undefined || change.subtasks === null ? undefined : toSubtasks(change.subtasks, now.subtasks ?? []),
+        });
+        let card = await send(`/cards/${cardId(id)}`, { method: 'PUT', body });
+        if (target && now.column_id !== target.id) {
+          await toEnd(b, now.id, target);
+          card = await fetchCard(id);
+        }
+        return face(card);
       });
     },
 
     /** Puts a card at the end of another column of its board. */
     moveCard(id, lane) {
       return oneAtATime(id, async () => {
-        const target = column(onlyOne(await getCard(id)), lane ?? '');
-        await send(`${cardPath(id)}/move`, { method: 'POST', form: { lane: String(target.id) } });
-        return { id: Number(id), column: target.name };
+        const now = await fetchCard(id);
+        const b = await boardOf(now);
+        const target = column(otherColumns(b), lane ?? '');
+        await toEnd(b, now.id, target);
+        return { id: now.id, column: target.name };
       });
     },
 
     /** Ticks or unticks one subtask, counted from 0. */
     setSubtask(id, index, done) {
       return oneAtATime(id, async () => {
-        const now = await getCard(id);
-        const s = now.subtasks[index];
-        if (!s) throw Object.assign(new Error(`card ${id} has ${now.subtasks.length} subtasks; there is no number ${index}`), { status: 400 });
-        const { body } = await send(`${cardPath(id)}/subtask`, { method: 'POST', htmx: true, form: { index: String(index), text: s.text, done: done ? '1' : '0' } });
-        return parseCardFace(body.slice(body.indexOf('id="card-') + 'id="card-'.length));
+        const now = await fetchCard(id);
+        const list = (now.subtasks ?? []).slice().sort(byPosition);
+        if (!list[index]) throw Object.assign(new Error(`card ${id} has ${list.length} subtasks; there is no number ${index}`), { status: 400 });
+        const subtasks = list.map((s, i) => ({ id: s.id, title: s.title, done: i === index ? Boolean(done) : s.done }));
+        return face(await send(`/cards/${cardId(id)}`, { method: 'PUT', body: whole(now, { subtasks }) }));
       });
     },
 
     archiveCard(id) {
       return oneAtATime(id, async () => {
-        await send(`${cardPath(id)}/archive`, { method: 'POST', form: {} });
-        return { id: Number(id), archived: true };
+        await send(`/cards/${cardId(id)}/archive`, { method: 'POST' });
+        return { id: cardId(id), archived: true };
       });
     },
 
     restoreCard(id) {
       return oneAtATime(id, async () => {
-        await send(`${cardPath(id)}/restore`, { method: 'POST', htmx: true, form: {} });
-        return { id: Number(id), archived: false };
+        await send(`/cards/${cardId(id)}/restore`, { method: 'POST' });
+        return { id: cardId(id), archived: false };
       });
     },
   };
@@ -309,7 +350,7 @@ export function createKanban({ baseUrl, fetchImpl = fetch, as, userHeader, timeo
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const BOARD = { type: 'string', description: 'The board, by name or by the slug in its address.' };
-const CARD = { type: 'integer', description: 'The card id, as kanban_read_board or kanban_search give it.' };
+const CARD = { type: 'string', description: 'The card id, as kanban_read_board or kanban_search give it.' };
 const COLUMN = { type: 'string', description: 'A column of the board, by name (for example "To Do") or by id.' };
 const DUE = { type: 'string', description: 'Due date, YYYY-MM-DD. An empty string removes it.' };
 const SUBTASKS = {
@@ -323,7 +364,7 @@ export function kanbanTools(kanban) {
   const read = { readOnlyHint: true, openWorldHint: false };
   const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
   return [
-    { name: 'kanban_list_boards', description: 'Lists the boards with how many cards each holds.', inputSchema: obj({}), annotations: read, run: async () => ({ boards: await kanban.boards() }) },
+    { name: 'kanban_list_boards', description: 'Lists the boards this service may read, with how many cards each holds. A board shows only once it grants this service on its access page.', inputSchema: obj({}), annotations: read, run: async () => ({ boards: await kanban.boards() }) },
     { name: 'kanban_read_board', description: 'Reads one board: its columns from left to right, and the cards in each with their description, due date and checklist. Archived cards are not on it.', inputSchema: obj({ board: BOARD }, ['board']), annotations: read, run: a => kanban.readBoard(a.board) },
     { name: 'kanban_get_card', description: 'Reads one card with every field as stored, and the columns it can move to.', inputSchema: obj({ card_id: CARD }, ['card_id']), annotations: read, run: a => kanban.getCard(a.card_id) },
     { name: 'kanban_search', description: 'Finds cards that have all of the words in their title, description or checklist; archived ones too. At most 100; truncated says there were more.', inputSchema: obj({ query: { type: 'string' }, board: BOARD }, ['query']), annotations: read, run: a => kanban.search(a.query, a.board) },
