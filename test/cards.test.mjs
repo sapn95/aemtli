@@ -14,7 +14,7 @@ function fakeKanban({ boards = [] } = {}) {
       if (!there) boards.push(name);
       return { slug: (there ?? name).toLowerCase().replace('ä', 'ae'), name: there ?? name, created: !there };
     },
-    kanban_search: ({ query }) => ({ hits: cards.filter(c => `${c.title}\n${c.description}`.toLowerCase().includes(query)).map(c => ({ id: c.archived ? null : c.id, title: c.title, column: c.column, archived: c.archived })) }),
+    kanban_search: ({ query }) => ({ hits: cards.filter(c => `${c.title}\n${c.description}`.toLowerCase().includes(query)).map(c => ({ id: c.id, title: c.title, column: c.column, archived: c.archived })) }),
     kanban_create_card: a => {
       const c = { id: next++, title: a.title, description: a.description, due: a.due ?? null, column: a.column ?? columns[0], archived: false };
       cards.push(c);
@@ -61,7 +61,7 @@ test('an archived card counts as dealt with and is not made again', async () => 
   const cards = jobCards(k.client);
   await cards.ensure('frist-x', { title: 'Frist' });
   k.cards[0].archived = true;
-  assert.deepEqual(await cards.ensure('frist-x', { title: 'Frist' }), { id: null, created: false, archived: true, url: null });
+  assert.deepEqual(await cards.ensure('frist-x', { title: 'Frist' }), { id: 1, created: false, archived: true, url: null }, 'its id, for a restore, but no link');
   assert.equal(k.cards.length, 1);
   assert.equal(await cards.done('frist-x'), false, 'nothing to move in the archive');
 });
@@ -105,7 +105,7 @@ test('with a public address a card carries the link to look it up', async () => 
   assert.deepEqual(made, { id: 1, created: true, archived: false, url: 'https://kanban.example/b/aemtli#card-1' });
   assert.equal((await cards.ensure('epost-A1', { title: 'Rechnung' })).url, 'https://kanban.example/b/aemtli#card-1', 'the card that was there already too');
   assert.equal(await cards.url(7), 'https://kanban.example/b/aemtli#card-7');
-  // An archived card has no anchor on the board, and no card id either.
+  // An archived card has no anchor on the board, so no link.
   k.cards[0].archived = true;
   assert.equal((await cards.ensure('epost-A1', { title: 'Rechnung' })).url, null);
   assert.equal(await cards.url(null), null);
