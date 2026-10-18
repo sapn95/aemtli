@@ -398,6 +398,8 @@ test('a login\'s process lives as long as a code does, and then the status comes
     log: () => {},
     loginMs: 400,
   });
+  // Built directly, the gateway checks the policy all the same.
+  assert.throws(() => createGateway({ command: [process.execPath, FAKE], policy: parsePolicy('allow: [secret_*]'), approvals: createApprovals({ dir }), adminToken: TOKEN, account: parseAccount(ACCOUNT) }), /names secret_status, which the policy must deny/);
   const server = createServer((req, res) => gateway.admin(req, res));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const admin = async (path, method = 'GET') => (await fetch(`http://127.0.0.1:${server.address().port}${path}`, { method, headers: { authorization: `Bearer ${TOKEN}` } })).json();

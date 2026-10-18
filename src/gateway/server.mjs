@@ -87,6 +87,13 @@ export function parseAccount(spec) {
  */
 export function createGateway({ command, env = process.env, policy, approvals, adminToken, account = null, version = '0', log = console.log, idleMs = 15 * 60_000, maxSessions = 8, timeoutMs = 120_000, loginMs = 15 * 60_000 }) {
   if (!adminToken || adminToken.length < 16) throw new Error('the admin token must be at least 16 characters');
+  // The login tools are the owner's: an agent that could start a device-code
+  // login could hand the code to someone who completes it with their own
+  // account, and the gateway would then hold theirs. So the policy has to
+  // deny them, or there is no gateway.
+  for (const step of [account?.status, account?.login].filter(Boolean)) {
+    if (policy.decide(step.tool) !== 'deny') throw new Error(`GATEWAY_ACCOUNT names ${step.tool}, which the policy must deny to agents`);
+  }
   const sessions = new Map();
   const childOptions = { env, timeoutMs, log };
 
@@ -371,13 +378,6 @@ export async function startGateway(env = process.env, { version = '0', log = con
   const policy = parsePolicy(readFileSync(env.POLICY_FILE, 'utf8'));
   const adminToken = readFileSync(env.ADMIN_TOKEN_FILE, 'utf8').trim();
   const account = parseAccount(env.GATEWAY_ACCOUNT);
-  // The login tools are the owner's: an agent that could start a device-code
-  // login could hand the code to someone who completes it with their own
-  // account, and the gateway would then hold theirs. So the policy has to
-  // deny them, or the gateway does not start.
-  for (const step of [account?.status, account?.login].filter(Boolean)) {
-    if (policy.decide(step.tool) !== 'deny') throw new Error(`GATEWAY_ACCOUNT names ${step.tool}, which the policy must deny to agents`);
-  }
   const approvals = createApprovals({ dir: `${env.STATE_DIR ?? '/state'}/approvals` });
   // The server gets the gateway's environment minus the gateway's own settings.
   const own = new Set(['MCP_COMMAND', 'POLICY_FILE', 'ADMIN_TOKEN_FILE', 'STATE_DIR', 'PORT', 'ADMIN_PORT', 'HOST', 'GATEWAY_ACCOUNT']);
