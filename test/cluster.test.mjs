@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { findProblems, redact, createCluster, createKubeApi, clusterTools } from '../src/mcp/cluster.mjs';
+import { findProblems, redact, createCluster, createKubeApi, clusterTools, namespaces } from '../src/mcp/cluster.mjs';
 
 const NOW = Date.parse('2026-10-18T12:00:00Z');
 const ago = minutes => new Date(NOW - minutes * 60_000).toISOString();
@@ -106,6 +106,40 @@ test('a CronJob that never succeeded is judged from its birth, and one failed ru
   assert.equal(q.summary, 'CronJob x/once: the last run failed');
 });
 
+test('a log loses what looks like a credential, in the forms logs write them', () => {
+  // Built at run time, so the repository's own secret scans do not take
+  // these made-up tokens for real ones.
+  const GHP = `ghp_${'a1'.repeat(18)}`;
+  const PAT = `github_pat_${'11ABCDEFG0'.repeat(3)}`;
+  const AKIA = `AKIA${'X'.repeat(16)}`;
+  const GHS = `ghs_${'b2'.repeat(18)}`;
+  const ANT = `sk-ant-api03-${'c3'.repeat(14)}`;
+  const AWS = `${'wJalr'.repeat(8)}`;
+  const CFAT = `cfat_${'d4'.repeat(14)}`;
+  const lines = {
+    '"Authorization":"Bearer abc.def"': 'abc.def',
+    [`Authorization: token ${GHS}`]: GHS,
+    [`using ${GHP} now`]: GHP,
+    [PAT]: PAT,
+    [`key ${ANT} here`]: ANT,
+    [`AWS_SECRET_ACCESS_KEY=${AWS}`]: AWS,
+    [`id ${AKIA}`]: AKIA,
+    'connecting to postgres://kanban:s3cr3t@db:5432/kanban': 's3cr3t',
+    'GET https://user:pw123@example.com/x': 'pw123',
+    'Set-Cookie: session=abcdef123; Path=/': 'abcdef123',
+    'run --token xyz987 --verbose': 'xyz987',
+    'GET /callback?code=oauthcode123&state=1': 'oauthcode123',
+    'url ?X-Amz-Signature=deadbeef42 ok': 'deadbeef42',
+    [CFAT]: CFAT,
+  };
+  for (const [line, secret] of Object.entries(lines)) assert.ok(!redact(line).includes(secret), `${line} -> ${redact(line)}`);
+  // Built from parts, so neither this file nor the secret scans hold a key header.
+  const [begin, end] = ['BEGIN', 'END'].map(w => `-----${w} PRIVATE ${'KEY'}-----`);
+  const pem = [begin, 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC', end].join('\n');
+  assert.equal(redact(`before\n${pem}\nafter`), 'before\n[a private key, blanked]\nafter');
+  for (const harmless of ['GET /healthz 200 3ms', 'restic: snapshot a7c7a6d3 saved', 'tokens used: 120']) assert.equal(redact(harmless), harmless);
+});
+
 test('a log loses its tokens and passwords, and keeps its end', () => {
   const text = [
     'Authorization: Bearer abc.def.ghi',
@@ -168,7 +202,7 @@ test('logs come from a pod, a Job\'s newest pod or a Deployment\'s, blanked; eve
       { lastTimestamp: ago(5), involvedObject: { kind: 'Job', name: 'b' }, reason: 'BackoffLimitExceeded', message: 'Job has reached the specified backoff limit' },
     ] },
   });
-  const cluster = createCluster({ api });
+  const cluster = createCluster({ api, logNamespaces: namespaces('backup, kanban') });
   const fromJob = await cluster.logs({ namespace: 'backup', job: 'pi-backup-1', lines: 50 });
   assert.equal(fromJob.pod, 'pb-new');
   assert.equal(fromJob.log, 'Fatal: nothing to backup\npassword=[blanked]\n');
@@ -181,6 +215,9 @@ test('logs come from a pod, a Job\'s newest pod or a Deployment\'s, blanked; eve
 
   await assert.rejects(() => cluster.logs({ namespace: 'backup' }), /name a pod, a job or a deployment/);
   await assert.rejects(() => cluster.logs({ namespace: 'Backup!', pod: 'x' }), /namespace is not a Kubernetes name/);
+  await assert.rejects(() => cluster.logs({ namespace: 'external-secrets', pod: 'x' }), /reading logs is not allowed in namespace external-secrets \(allowed: backup, kanban\)/);
+  await assert.rejects(() => cluster.events({ namespace: 'argocd' }), /reading events is not allowed in namespace argocd/);
+  await assert.rejects(() => createCluster({ api }).logs({ namespace: 'backup', pod: 'x' }), /allowed: none/, 'no list, no logs');
   await assert.rejects(() => cluster.logs({ namespace: 'backup', pod: '../x' }), /pod is not a Kubernetes name/);
   await assert.rejects(() => cluster.logs({ namespace: 'backup', pod: 'x', lines: 5000 }), /lines is a whole number/);
 
@@ -199,7 +236,7 @@ test('the handgrips: restart, rerun, refresh and resync, each the patch or the J
     'PATCH /apis/argoproj.io/v1alpha1/namespaces/argo-cd/applications/web': {},
     'PATCH /apis/external-secrets.io/v1/namespaces/aemtli/externalsecrets/aemtli-vapid': {},
   });
-  const cluster = createCluster({ api, now: () => new Date(NOW) });
+  const cluster = createCluster({ api, now: () => new Date(NOW), healNamespaces: namespaces('apps,aemtli'), rerunNamespaces: namespaces('backup') });
   assert.deepEqual(await cluster.restart({ namespace: 'apps', deployment: 'web' }), { restarted: 'apps/web' });
   assert.deepEqual(await cluster.rerun({ namespace: 'backup', cronjob: 'pi-backup' }), { started: 'pi-backup-heal-x1' });
   assert.deepEqual(await cluster.refresh({ app: 'pi-backup' }), { refreshed: 'argocd/pi-backup' });
@@ -217,8 +254,17 @@ test('the handgrips: restart, rerun, refresh and resync, each the patch or the J
   assert.deepEqual(resync.body, { metadata: { annotations: { 'force-sync': String(NOW) } } });
 
   await assert.rejects(() => cluster.restart({ namespace: 'apps', deployment: 'a/b' }), /deployment is not a Kubernetes name/);
+  await assert.rejects(() => cluster.restart({ namespace: 'kube-system', deployment: 'coredns' }), /a restart is not allowed in namespace kube-system/);
+  await assert.rejects(() => cluster.resync({ namespace: 'external-secrets', externalsecret: 'x' }), /a resync is not allowed in namespace external-secrets/);
+  await assert.rejects(() => cluster.rerun({ namespace: 'aemtli', cronjob: 'aemtli-zahlungen' }), /a rerun is not allowed in namespace aemtli \(allowed: backup\)/);
+  const before = asked.length;
   await assert.rejects(() => cluster.refresh({ app: '' }), /app is not a Kubernetes name/);
-  await assert.rejects(() => cluster.rerun({ namespace: 'x', cronjob: 'UPPER' }), /cronjob is not a Kubernetes name/);
+  await assert.rejects(() => cluster.rerun({ namespace: 'backup', cronjob: 'UPPER' }), /cronjob is not a Kubernetes name/);
+  assert.equal(asked.length, before, 'nothing refused reached the API');
+
+  const off = fakeApi({ 'GET /apis/batch/v1/namespaces/backup/cronjobs/paused': { ...cron, spec: { ...cron.spec, suspend: true } } });
+  await assert.rejects(() => createCluster({ api: off.api, rerunNamespaces: namespaces('backup') }).rerun({ namespace: 'backup', cronjob: 'paused' }), /backup\/paused is suspended/);
+  assert.ok(!off.asked.some(a => a.method === 'POST'), 'and no Job was made');
 });
 
 test('the tools: names, which only read, and that each calls its method', async () => {

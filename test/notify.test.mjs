@@ -19,7 +19,7 @@ test('a push goes down every channel, and counts as sent if any took it', async 
 test('the notify port takes a push from a job with the token, and nothing else', async () => {
   const pushed = [];
   let deliver = true;
-  const server = await startNotifyServer({ notify: async m => { pushed.push(m); return deliver; }, token: 'job-token', port: 0, host: '127.0.0.1', log: () => {} });
+  const server = await startNotifyServer({ notify: async m => { pushed.push(m); return deliver; }, token: 'job-token', port: 0, host: '127.0.0.1', origin: 'https://chores.example', log: () => {} });
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (body, headers = { authorization: 'Bearer job-token' }, path = '/notify') =>
     fetch(`${base}${path}`, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) });
@@ -39,9 +39,15 @@ test('the notify port takes a push from a job with the token, and nothing else',
     assert.deepEqual(await res.json(), { delivered: true });
     deliver = false;
     assert.deepEqual(await (await post({ title: 'y', click: 7 })).json(), { delivered: false });
+    // ntfy would open any link a push carries: only this site's pages pass.
+    for (const click of ['https://evil.example/x', 'https://chores.example.evil.example/', 'javascript:alert(1)', 'https://chores.example']) await post({ title: 'z', click });
     assert.deepEqual(pushed, [
       { title: 'Frist: Prämie', message: 'Bis Freitag.', click: 'https://chores.example/x', tags: 'bell' },
       { title: 'y', message: '' },
+      { title: 'z', message: '' },
+      { title: 'z', message: '' },
+      { title: 'z', message: '' },
+      { title: 'z', message: '', click: 'https://chores.example' },
     ]);
   } finally {
     server.close();

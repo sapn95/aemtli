@@ -29,9 +29,13 @@ const digest = text => createHash('sha256').update(String(text)).digest();
 /**
  * The internal port: POST /notify with `Authorization: Bearer <token>` and
  * a JSON body { title, message, click?, tags? }. Answers 200 { delivered }.
- * Resolves once it listens.
+ * `click` is kept only when it is a page of `origin`. Resolves once it
+ * listens.
  */
-export function startNotifyServer({ notify, token, port, host = '0.0.0.0', log = console.log }) {
+export function startNotifyServer({ notify, token, port, host = '0.0.0.0', origin, log = console.log }) {
+  // A tap on the push opens `click`. Web Push's worker opens only this site,
+  // but ntfy opens whatever it is given, so a link elsewhere is dropped here.
+  const ours = click => typeof click === 'string' && Boolean(origin) && (click === origin || click.startsWith(`${origin}/`));
   if (!token) return Promise.reject(new Error('the notify port needs a token (NOTIFY_TOKEN_FILE)'));
   const want = digest(`Bearer ${token}`);
   const answer = (res, status, body) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -52,7 +56,7 @@ export function startNotifyServer({ notify, token, port, host = '0.0.0.0', log =
       }
       if (!body || typeof body.title !== 'string' || !body.title.trim()) return answer(res, 400, { error: 'a JSON body with a title' });
       const { title, message = '', click, tags } = body;
-      const delivered = await notify({ title, message: String(message), ...(typeof click === 'string' ? { click } : {}), ...(typeof tags === 'string' ? { tags } : {}) });
+      const delivered = await notify({ title, message: String(message), ...(ours(click) ? { click } : {}), ...(typeof tags === 'string' ? { tags } : {}) });
       log(`notify from a job: ${delivered ? 'sent' : 'not sent'}`);
       answer(res, 200, { delivered });
     });

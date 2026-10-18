@@ -499,8 +499,18 @@ Where a handgrip may help, the problem names it, and a tool does it:
 `cluster_restart` restarts a Deployment whose pods crash, `cluster_rerun`
 starts a failed CronJob's Job again, `cluster_refresh` asks Argo CD to
 compare an application with git again, and `cluster_resync` asks ESO to
-fetch an ExternalSecret again. `cluster_logs` and `cluster_events` show why;
-tokens and passwords in a log are blanked before it leaves the cluster.
+fetch an ExternalSecret again. `cluster_logs` and `cluster_events` show why.
+
+What may be read and touched is narrowed by namespace allow lists, and a list
+left out allows nothing: logs and events only where `CLUSTER_LOG_NAMESPACES`
+says, restarts and resyncs where `CLUSTER_HEAL_NAMESPACES` says, reruns where
+`CLUSTER_RERUN_NAMESPACES` says, and never of a suspended CronJob. A log can
+hold a credential, and a model reading it may have been talked into sending
+it on, so the namespaces of the secret store, the GitOps controller and the
+tunnel belong on no list. What is read is cut, and tokens, passwords, keys,
+cookies and credentials in URLs are blanked as a backstop. The deployment's
+RBAC should be narrowed to the same lists, so they hold even if this code is
+bypassed.
 
 A job, `cluster-watch`, calls it every ten minutes. It pushes only when a
 problem is new or gone, uses each handgrip at most once in six hours per
@@ -552,11 +562,13 @@ identity `KANBAN_USER_HEADER` (byge's `AUTH_SERVICE_HEADER`) and `KANBAN_AS`
 `aemtli mcp-transport` needs no setting. `TRANSPORT_API` points it at
 another address of the same API (`https://transport.opendata.ch/v1`).
 
-`aemtli mcp-cluster`: the pod's service account (a ClusterRole that reads
-pods and their logs, events, workloads, Jobs, CronJobs, nodes, Argo CD
-applications and ExternalSecrets, and may patch Deployments, Applications
-and ExternalSecrets and create Jobs), and `CLUSTER_PROBES`, public addresses
-to look at, comma-separated.
+`aemtli mcp-cluster`: the pod's service account (cluster-wide reads of
+pods, workloads, Jobs, CronJobs, nodes, Argo CD applications and
+ExternalSecrets; logs and events, patching Deployments and ExternalSecrets,
+and creating Jobs only in the namespaces of the lists below; patching
+Applications in Argo CD's namespace), `CLUSTER_PROBES` (public addresses to
+look at), and `CLUSTER_LOG_NAMESPACES`, `CLUSTER_HEAL_NAMESPACES` and
+`CLUSTER_RERUN_NAMESPACES`. All are comma-separated.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),
