@@ -24,8 +24,9 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `aemtli mcp-recipes` | The chores in the GitOps repository, and a pull request to change one. See [Chores that improve themselves](#chores-that-improve-themselves). |
 | `aemtli mcp-github` | The owner's repositories through a GitHub App: read, merge a green pull request, tag a release. See [The repositories](#the-repositories). |
 | `aemtli mcp-transport` | The Swiss public transport timetable: stations, connections and departure boards. See [Trains and buses](#trains-and-buses). |
+| `aemtli mcp-cluster` | What is wrong in the cluster, and the few handgrips that put most of it right. See [The cluster keeps watch](#the-cluster-keeps-watch). |
 
-One image holds all six: goose, node and npm (for MCP servers started with
+One image holds all of them: goose, node and npm (for MCP servers started with
 `npx`), uv and python (for `uvx`), and the app.
 
 ```text
@@ -479,6 +480,35 @@ appointment: it reads the event's start and place, asks for connections that
 arrive a little before the start, and leaves time to walk from the stop to
 the door.
 
+## The cluster keeps watch
+
+`aemtli mcp-cluster` reads the cluster with its own service account and
+reports what is wrong, each problem with a key that stays the same while it
+lasts:
+
+- an Argo CD application that is degraded or out of sync;
+- pods that crash, cannot pull their image, or wait to start for more than
+  ten minutes, one problem per Deployment, StatefulSet or DaemonSet;
+- a CronJob whose last run failed, or that missed two runs in a row;
+- a node that is not ready or under disk, memory or PID pressure;
+- an ExternalSecret that is not ready;
+- a public address in `CLUSTER_PROBES` that does not answer, or answers
+  with a 5xx (a redirect to a sign-in counts as an answer).
+
+Where a handgrip may help, the problem names it, and a tool does it:
+`cluster_restart` restarts a Deployment whose pods crash, `cluster_rerun`
+starts a failed CronJob's Job again, `cluster_refresh` asks Argo CD to
+compare an application with git again, and `cluster_resync` asks ESO to
+fetch an ExternalSecret again. `cluster_logs` and `cluster_events` show why;
+tokens and passwords in a log are blanked before it leaves the cluster.
+
+A job, `cluster-watch`, calls it every ten minutes. It pushes only when a
+problem is new or gone, uses each handgrip at most once in six hours per
+problem, and asks the model for a two-line diagnosis from the log and the
+events only for a new problem. A run that finds nothing new uses no tokens.
+What it cannot put right waits for a fix in git, which goose can propose in
+the chat with the same tools.
+
 ## Settings
 
 `aemtli web`:
@@ -521,6 +551,12 @@ identity `KANBAN_USER_HEADER` (byge's `AUTH_SERVICE_HEADER`) and `KANBAN_AS`
 
 `aemtli mcp-transport` needs no setting. `TRANSPORT_API` points it at
 another address of the same API (`https://transport.opendata.ch/v1`).
+
+`aemtli mcp-cluster`: the pod's service account (a ClusterRole that reads
+pods and their logs, events, workloads, Jobs, CronJobs, nodes, Argo CD
+applications and ExternalSecrets, and may patch Deployments, Applications
+and ExternalSecrets and create Jobs), and `CLUSTER_PROBES`, public addresses
+to look at, comma-separated.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),

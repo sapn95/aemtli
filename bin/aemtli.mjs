@@ -16,6 +16,7 @@ import { createRecipes, recipeTools } from '../src/mcp/recipes.mjs';
 import { createGitHub, githubTools } from '../src/mcp/github.mjs';
 import { createAppAuth } from '../src/mcp/github-app.mjs';
 import { createTransport, transportTools } from '../src/mcp/transport.mjs';
+import { createCluster, createKubeApi, clusterTools } from '../src/mcp/cluster.mjs';
 import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 import { createWebPush, loadVapidKey } from '../src/web/webpush.mjs';
@@ -58,6 +59,7 @@ const USAGE = `ämtli ${version}
   aemtli mcp-recipes                           the chores in git as an MCP server on stdio, for a gateway
   aemtli mcp-github                            the owner's repositories as an MCP server on stdio, for a gateway
   aemtli mcp-transport                         Swiss public transport timetables as an MCP server on stdio, for a gateway
+  aemtli mcp-cluster                           the cluster's health and a few handgrips as an MCP server on stdio, for a gateway
 
 Settings come from the environment; see the README.`;
 
@@ -386,6 +388,16 @@ async function mcpTransport() {
   await serveStdio({ name: 'aemtli-transport', version, tools: transportTools(createTransport({ baseUrl: env.TRANSPORT_API || undefined })) });
 }
 
+/**
+ * `aemtli mcp-cluster`: what is wrong in the cluster and the handgrips that
+ * put most of it right, as MCP tools on stdio, with the pod's own service
+ * account. CLUSTER_PROBES lists public addresses to look at, comma-separated.
+ */
+async function mcpCluster() {
+  const probes = (env.CLUSTER_PROBES ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  await serveStdio({ name: 'aemtli-cluster', version, tools: clusterTools(createCluster({ api: createKubeApi(), probes })) });
+}
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === 'run') await run(rest);
 else if (command === 'job') await job(rest);
@@ -396,6 +408,7 @@ else if (command === 'mcp-kanban') await mcpKanban();
 else if (command === 'mcp-recipes') await mcpRecipes();
 else if (command === 'mcp-github') await mcpGitHub();
 else if (command === 'mcp-transport') await mcpTransport();
+else if (command === 'mcp-cluster') await mcpCluster();
 else {
   console.log(USAGE);
   process.exit(command === '--help' || command === undefined ? 0 : 2);
