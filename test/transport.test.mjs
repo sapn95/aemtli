@@ -116,8 +116,8 @@ test('connections: what is wrong with a question is said before anything is aske
   await refused({ from: 7 }, /from is missing/);
   await refused({ to: '  ' }, /to is missing/);
   await refused({ to: 'x'.repeat(201) }, /to is longer than 200/);
-  await refused({ via: 'Zug' }, /via is a list of at most 5/);
-  await refused({ via: ['a', 'b', 'c', 'd', 'e', 'f'] }, /via is a list of at most 5/);
+  await refused({ via: 'Zug' }, /via is a list of at most 2/);
+  await refused({ via: ['a', 'b', 'c'] }, /via is a list of at most 2/);
   await refused({ via: ['Zug', ''] }, /via 2 is missing/);
   await refused({ date: '19.10.2026' }, /not a date/);
   await refused({ date: '2026-02-30' }, /not a day of the calendar/);
@@ -145,6 +145,10 @@ test('when the API fails, the error says how', async () => {
   await assert.rejects(ask({ status: 500, body: ' boom ' }), err => err.message === 'transport.opendata.ch answered 500: boom' && err.status === 500);
   await assert.rejects(ask({ status: 502, body: '' }), err => err.message === 'transport.opendata.ch answered 502');
   await assert.rejects(ask({ body: '<html>' }), /not JSON/);
+  await assert.rejects(ask({ status: 400, body: { errors: ['Invalid via count (max 2 allowed).'] } }), err => err.message === 'transport.opendata.ch refused the question: Invalid via count (max 2 allowed).' && err.status === 400);
+  await assert.rejects(ask({ body: { errors: ['a', 'b'] } }), err => err.message === 'transport.opendata.ch refused the question: a; b' && err.status === 400);
+  await assert.rejects(ask({ status: 400, body: { errors: [] } }), /answered 400: \{"errors":\[\]\}/);
+  await assert.rejects(ask({ body: null }), /no station or place found for "Bern"/);
   await assert.rejects(ask(Object.assign(new Error('late'), { name: 'TimeoutError' })), /did not answer: no answer in 15 s/);
   await assert.rejects(ask(new Error('ECONNREFUSED')), /did not answer: ECONNREFUSED/);
 });
@@ -182,12 +186,14 @@ test('stationboard: refusals, and a station the API does not know', async () => 
 test('locations: stations by default, at most ten, with where they are', async () => {
   const many = Array.from({ length: 12 }, (_, i) => ({ id: String(i), name: `Halt ${i}`, icon: 'bus', coordinate: { x: 46.9, y: 7.4 } }));
   many[1] = { id: null, name: 'Somewhere', coordinate: { x: null, y: null } };
+  many[2] = { id: '2', name: 'Bundesplatz', type: 'address', icon: 'bus' };
   const api = fakeApi({ '/v1/locations': { body: { stations: many } } });
   const found = await api.transport.locations({ query: 'Halt' });
   assert.deepEqual(api.seen[0].query, [['query', 'Halt'], ['type', 'station']]);
   assert.equal(found.locations.length, 10);
   assert.deepEqual(found.locations[0], { name: 'Halt 0', id: '0', kind: 'bus', latitude: 46.9, longitude: 7.4 });
   assert.deepEqual(found.locations[1], { name: 'Somewhere', id: null, kind: null });
+  assert.equal(found.locations[2].kind, 'address', 'the documented type first, the icon after it');
   await api.transport.locations({ query: 'Bundesplatz, Bern', type: 'all' });
   assert.deepEqual(api.seen[1].query, [['query', 'Bundesplatz, Bern'], ['type', 'all']]);
   assert.deepEqual(await fakeApi({ '/v1/locations': { body: {} } }).transport.locations({ query: 'x' }), { locations: [] });
