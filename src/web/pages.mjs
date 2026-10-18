@@ -477,7 +477,7 @@ export function chatPage(on = true) {
   <div id="attached" class="attached" aria-label="Images to send" hidden></div>
   <form id="form" class="composer">
     <label class="visually-hidden" for="input">Message</label>
-    <textarea id="input" rows="3" placeholder="Ask goose something, or paste or drop an image here. Cmd+Enter sends."></textarea>
+    <textarea id="input" rows="3" placeholder="Ask goose something, or paste or drop an image here."></textarea>
     <input type="file" id="pick" accept="image/*" multiple hidden>
     <div class="composer-actions"><button type="button" id="attach" class="quiet-button">Image</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button><button type="submit" id="send">Send</button></div>
   </form>

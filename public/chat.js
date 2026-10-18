@@ -483,8 +483,21 @@ form.addEventListener('submit', async event => {
   }
 });
 
+// Enter sends and Shift+Enter starts a new line, as in most chats. Not on a
+// touch screen, whose keyboard has no Shift+Enter: there Enter is a new line
+// and the Send button sends. Cmd/Ctrl+Enter sends everywhere. A key that
+// confirms a word being composed (Japanese, Chinese input) sends nothing.
+const enterSends = window.matchMedia?.('(pointer: fine)').matches ?? true;
+input.placeholder = enterSends
+  ? 'Ask goose something, or paste or drop an image here. Enter sends, Shift+Enter for a new line.'
+  : 'Ask goose something, or paste or drop an image here.';
 input.addEventListener('keydown', event => {
-  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) form.requestSubmit();
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+  if (event.metaKey || event.ctrlKey || (enterSends && !event.shiftKey && !event.altKey)) {
+    event.preventDefault();
+    // While goose answers, Send is off, and so is Enter.
+    if (!send.disabled) form.requestSubmit();
+  }
 });
 
 cancel.addEventListener('click', async () => {
