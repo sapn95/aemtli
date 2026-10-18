@@ -550,7 +550,7 @@ test('ämtli installs as an app: manifest, icons and service worker, all behind 
     assert.equal(res.headers['content-type'], 'application/manifest+json; charset=utf-8');
     const manifest = JSON.parse(res.body);
     assert.deepEqual([manifest.name, manifest.short_name, manifest.id, manifest.start_url, manifest.scope, manifest.display], ['ämtli', 'ämtli', '/', '/', '/', 'standalone']);
-    assert.deepEqual([manifest.background_color, manifest.theme_color], ['#f5f7f8', '#2b4fd8']);
+    assert.deepEqual([manifest.background_color, manifest.theme_color], ['#1f2b27', '#1f2b27'], 'the dark paper, for the band under the app');
     assert.deepEqual(manifest.icons.map(i => `${i.sizes} ${i.purpose}`), ['192x192 any', '512x512 any', '512x512 maskable']);
     for (const icon of [...manifest.icons, { src: '/static/icons/apple-touch-icon.png?v=0.0.0-test', sizes: '180x180' }]) {
       const png = await call(icon.src, { raw: true });
