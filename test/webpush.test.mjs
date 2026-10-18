@@ -160,3 +160,19 @@ test('a file that cannot be read starts empty, one that holds a bad entry loses 
     assert.throws(() => createWebPush({ vapid, subject, file: join(dir, 'x.json') }), /subject/, String(subject));
   }
 });
+
+test('a long text in many bytes is cut to fit one record, and a long link is left out', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aemtli-push-'));
+  const vapid = loadVapidKey(pem());
+  const sent = [];
+  const push = createWebPush({ vapid, subject: 'https://chores.example', file: join(dir, 's.json'), fetchImpl: async (url, init) => { sent.push(init.body); return { status: 201 }; } });
+  const phone = browser();
+  push.subscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/p', keys: phone.keys });
+  await push.send({ title: 'Frist', message: '€\u0001'.repeat(500), click: `https://chores.example/${'x'.repeat(600)}` });
+  await push.send({ title: 'Kurz', message: 'Bis Freitag.', click: 'https://chores.example/x' });
+  const [long, short] = sent.map(body => JSON.parse(phone.decrypt(body)));
+  assert.ok(Buffer.byteLength(JSON.stringify(long)) <= 3900, 'fits one record');
+  assert.ok(long.body.length > 100 && long.body.length < 1000, 'cut, not dropped');
+  assert.equal(long.url, undefined, 'a link that long is left out');
+  assert.deepEqual(short, { title: 'Kurz', body: 'Bis Freitag.', url: 'https://chores.example/x' });
+});

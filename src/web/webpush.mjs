@@ -23,8 +23,11 @@ const allowedHost = host => PUSH_HOSTS.some(h => host === h || host.endsWith(`.$
 // Few devices: a phone or two and a laptop. A cap keeps a loop from
 // filling the file.
 const MAX_SUBSCRIPTIONS = 20;
-// One record, as RFC 8291 says, so the text has to stay well under 4 KB.
+// One record, as RFC 8291 says, so the text has to stay well under 4 KB:
+// the record less the header, the delimiter and the tag, with room to spare.
 const RECORD_SIZE = 4096;
+const MAX_PAYLOAD = 3900;
+const MAX_URL = 512;
 // How long a push service keeps a message for a phone that is off.
 const TTL_SECONDS = 24 * 3600;
 
@@ -165,11 +168,19 @@ export function createWebPush({ vapid, subject, file, log = console.log, fetchIm
     /** One message to every device. `click` is the page a tap opens. */
     async send({ title, message, click }) {
       if (!subs.length) return 0;
-      const payload = JSON.stringify({
+      const fields = {
         title: String(title).replace(/\s+/g, ' ').slice(0, 120),
         body: String(message ?? '').slice(0, 1000),
-        ...(click ? { url: String(click) } : {}),
-      });
+        ...(click && String(click).length <= MAX_URL ? { url: String(click) } : {}),
+      };
+      // One record: what is encrypted has to stay under 4 KB in bytes, and
+      // a character outside ASCII takes up to three of them, so the text is
+      // cut until it fits.
+      let payload = JSON.stringify(fields);
+      while (Buffer.byteLength(payload) > MAX_PAYLOAD && fields.body) {
+        fields.body = fields.body.slice(0, Math.floor(fields.body.length * 0.8));
+        payload = JSON.stringify(fields);
+      }
       let delivered = 0;
       const gone = [];
       await Promise.all(subs.map(async sub => {

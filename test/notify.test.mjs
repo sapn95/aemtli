@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createNotify, startNotifyServer } from '../src/web/notify.mjs';
+import { createPush } from '../src/web/approvals.mjs';
 
 test('a push goes down every channel, and counts as sent if any took it', async () => {
   const seen = [];
@@ -46,4 +47,15 @@ test('the notify port takes a push from a job with the token, and nothing else',
     server.close();
   }
   await assert.rejects(() => startNotifyServer({ notify: async () => true, token: '', port: 0 }), /needs a token/);
+});
+
+test('ntfy gets the tags one by one, whichever way the push came', async () => {
+  const bodies = [];
+  const lines = [];
+  const push = createPush({ ntfyUrl: 'http://ntfy.test', topic: 'chores', token: 't', log: l => lines.push(l), fetchImpl: async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: bodies.length === 1, status: 503 }; } });
+  assert.equal(await push({ title: 'Frist', message: 'Bis Freitag', tags: 'warning, bell', click: 'https://chores.example' }), true);
+  assert.deepEqual(bodies[0], { topic: 'chores', title: 'Frist', message: 'Bis Freitag', tags: ['warning', 'bell'], click: 'https://chores.example' });
+  assert.equal(await push({ title: 'x', message: 'y' }), false);
+  assert.deepEqual(bodies[1].tags, ['speech_balloon']);
+  assert.deepEqual(lines, ['could not push: ntfy answered 503']);
 });
