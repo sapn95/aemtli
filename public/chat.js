@@ -532,6 +532,12 @@ async function setArchived(id, archived, button) {
   try {
     await api(`/api/chats/${encodeURIComponent(id)}/archive`, { method: 'POST', body: { archived } });
     busy.delete(id);
+    // The open conversation stays in the list whatever it is, so archiving it
+    // would seem to do nothing: it is closed, and goes to the archive at once.
+    if (archived && id === current) {
+      location.hash = '';
+      open(null);
+    }
     await refreshList();
   } catch (err) {
     busy.delete(id);
