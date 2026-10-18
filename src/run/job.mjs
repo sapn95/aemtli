@@ -7,8 +7,9 @@
 //                            owner, through the kanban gateway (see cards.mjs)
 //   ctx.ask({ prompt, ... }) one message to the model through the model proxy;
 //                            a small model by default, tokens counted
-//   ctx.notify({...})        one push through ntfy, when the run is worth a
-//                            look on a phone
+//   ctx.notify({...})        one push, when the run is worth a look on a
+//                            phone: through the web pod (Web Push and ntfy)
+//                            or straight to ntfy
 //   ctx.pdfText(bytes)       a PDF's text, laid out as on the page
 //   ctx.qr(bytes)            the QR codes on a PDF's pages, as text
 //   ctx.bills(bytes)         the Swiss QR bills on a PDF, read and checked
@@ -151,8 +152,10 @@ export async function runJob({
     }
   }
 
-  // Where a job may push, if the pod was given the settings for it.
-  const ntfy = env.NTFY_URL && env.NTFY_TOPIC && env.NTFY_TOKEN_FILE
+  // Where a job may push, if the pod was given the settings for it: the web
+  // pod's notify port, which sends on to every channel it has, or else ntfy.
+  const relay = env.NOTIFY_URL && env.NOTIFY_TOKEN_FILE ? { url: env.NOTIFY_URL, tokenFile: env.NOTIFY_TOKEN_FILE } : null;
+  const ntfy = !relay && env.NTFY_URL && env.NTFY_TOPIC && env.NTFY_TOKEN_FILE
     ? { url: new URL(env.NTFY_URL).origin + new URL(env.NTFY_URL).pathname.replace(/\/$/, ''), topic: env.NTFY_TOPIC, tokenFile: env.NTFY_TOKEN_FILE }
     : null;
 
@@ -261,33 +264,37 @@ export async function runJob({
     /**
      * Sends one push. `title` and `message` are the whole of it: a phone
      * shows little, and what a job read may be nobody else's business.
-     * Resolves to true when it went out, false when the pod has no ntfy
-     * settings or ntfy refused, which never fails the run.
+     * Resolves to true when it went out, false when the pod has no push
+     * settings or the push was refused, which never fails the run.
      */
     async notify({ title, message, click = env.PUBLIC_ORIGIN, tags = 'bell' }) {
-      if (!ntfy) {
-        log('nothing to notify with: NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE are not all set');
+      const target = relay ?? ntfy;
+      if (!target) {
+        log('nothing to notify with: set NOTIFY_URL and NOTIFY_TOKEN_FILE, or NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE');
         return false;
       }
+      const text = {
+        title: String(title).replace(/\s+/g, ' ').slice(0, 120),
+        message: String(message).slice(0, 2000),
+        ...(click ? { click } : {}),
+      };
       try {
         // Published as JSON, which carries UTF-8 in the title too; a header
         // could only carry latin-1, and "Frist: Prämie" would lose its ä.
-        const res = await fetchImpl(ntfy.url, {
+        const res = await fetchImpl(target.url, {
           method: 'POST',
           headers: {
-            authorization: `Bearer ${readFileSync(ntfy.tokenFile, 'utf8').trim()}`,
+            authorization: `Bearer ${readFileSync(target.tokenFile, 'utf8').trim()}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify({
-            topic: ntfy.topic,
-            title: String(title).replace(/\s+/g, ' ').slice(0, 120),
-            message: String(message).slice(0, 2000),
-            tags: String(tags).split(',').map(t => t.trim()).filter(Boolean),
-            ...(click ? { click } : {}),
-          }),
+          body: JSON.stringify(relay
+            ? { ...text, tags: String(tags) }
+            : { topic: ntfy.topic, ...text, tags: String(tags).split(',').map(t => t.trim()).filter(Boolean) }),
           signal: AbortSignal.timeout(10_000),
         });
-        if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
+        if (!res.ok) throw new Error(`${relay ? 'the web pod' : 'ntfy'} answered ${res.status}`);
+        // The web pod answers 200 with whether any channel took it.
+        if (relay && !(await res.json().catch(() => ({}))).delivered) throw new Error('the web pod had no channel that took it');
         log('notified');
         return true;
       } catch (err) {

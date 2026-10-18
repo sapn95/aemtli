@@ -202,9 +202,46 @@ test('a job can push once through ntfy, and a run without the settings says so',
 
     const without = await runJob({ name: 'push', recipesDir, dataDir, anthropic: null });
     assert.equal(read(dataDir, 'push', without.id, 'result.md'), 'false false\n');
-    assert.match(read(dataDir, 'push', without.id, 'run.log'), /NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE are not all set/);
+    assert.match(read(dataDir, 'push', without.id, 'run.log'), /nothing to notify with: set NOTIFY_URL and NOTIFY_TOKEN_FILE, or NTFY_URL, NTFY_TOPIC and NTFY_TOKEN_FILE/);
   } finally {
     ntfy.close();
+  }
+});
+
+test('with NOTIFY_URL a job pushes through the web pod, which sends it on, and ntfy is not asked', async () => {
+  const seen = [];
+  let delivered = true;
+  const web = createServer((req, res) => {
+    let text = '';
+    req.on('data', c => { text += c; });
+    req.on('end', () => { seen.push({ path: req.url, headers: req.headers, body: JSON.parse(text) }); res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ delivered })); });
+  });
+  await new Promise(r => web.listen(0, '127.0.0.1', r));
+  const { recipesDir, dataDir } = dirs({ relay: `export default async function (ctx) {
+  const first = await ctx.notify({ title: 'Frist:\\n Prämie', message: 'Bis Freitag', tags: 'warning' });
+  const second = await ctx.notify({ title: 'again', message: 'x' });
+  return \`\${first} \${second}\`;
+}
+` });
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'notify-token'), 'job-token\n');
+  try {
+    const env = {
+      NOTIFY_URL: `http://127.0.0.1:${web.address().port}/notify`,
+      NOTIFY_TOKEN_FILE: join(dataDir, 'notify-token'),
+      // Set as well, and left alone: the web pod sends on to ntfy itself.
+      NTFY_URL: 'http://127.0.0.1:9/', NTFY_TOPIC: 'chores', NTFY_TOKEN_FILE: join(dataDir, 'notify-token'),
+      PUBLIC_ORIGIN: 'https://chores.example',
+    };
+    const first = await runJob({ name: 'relay', recipesDir, dataDir, env, anthropic: null, fetchImpl: async (url, init) => { if (seen.length) delivered = false; return fetch(url, init); } });
+    assert.equal(read(dataDir, 'relay', first.id, 'result.md'), 'true false\n', 'a push no channel took is false');
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].path, '/notify');
+    assert.equal(seen[0].headers.authorization, 'Bearer job-token');
+    assert.deepEqual(seen[0].body, { title: 'Frist: Prämie', message: 'Bis Freitag', click: 'https://chores.example', tags: 'warning' });
+    assert.match(read(dataDir, 'relay', first.id, 'run.log'), /could not notify: the web pod had no channel that took it/);
+  } finally {
+    web.close();
   }
 });
 

@@ -42,3 +42,38 @@ self.addEventListener('fetch', event => {
     }));
   }
 });
+
+// A push from ämtli (see webpush.mjs): a title, a line, and the page a tap
+// opens. Only pages of this site are opened; anything else opens the
+// dashboard.
+self.addEventListener('push', event => {
+  let data;
+  try {
+    data = event.data?.json() ?? {};
+  } catch {
+    data = { title: 'ämtli', body: event.data?.text() ?? '' };
+  }
+  event.waitUntil(self.registration.showNotification(data.title || 'ämtli', {
+    body: data.body ?? '',
+    icon: `/static/icons/icon-192.png?v=${VERSION}`,
+    badge: `/static/icons/badge-96.png?v=${VERSION}`,
+    data: { url: data.url ?? '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  let target = new URL('/', self.location.origin);
+  try {
+    const url = new URL(event.notification.data?.url ?? '/', self.location.origin);
+    if (url.origin === self.location.origin) target = url;
+  } catch {
+    // Not a URL: the dashboard.
+  }
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
+    const open = windows.find(w => new URL(w.url).origin === self.location.origin);
+    // navigate() works only on a page this worker controls; else a new one.
+    if (open) return open.focus().then(w => w.navigate(target.href)).catch(() => self.clients.openWindow(target.href));
+    return self.clients.openWindow(target.href);
+  }));
+});

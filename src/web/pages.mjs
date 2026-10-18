@@ -314,26 +314,36 @@ ${unreachableNote(unreachable)}
 }
 
 /**
- * What goose reaches, one gateway each, and the logins they keep. The page
- * asks each gateway itself (connections.js), so a slow one holds up nothing.
+ * What goose reaches, one gateway each, and the logins they keep; then
+ * whether this device gets notifications. The page asks each gateway
+ * itself (connections.js), so a slow one holds up nothing, and push.js
+ * asks the browser.
  */
-export function connectionsPage(gateways) {
-  if (!gateways.length) {
-    return `<section class="empty"><h1>No gateways yet</h1>
-<p>A gateway serves one MCP server to the agents and holds the calls that need your approval. Set <code>GATEWAYS</code> to list them, as the README describes.</p></section>`;
-  }
+export function connectionsPage(gateways, webPush = false) {
   const rows = gateways.map(g => `<li class="connection" data-gateway="${esc(g.name)}">
   <h2>${esc(g.title)}</h2>
   <p class="account quiet" role="status">Asking…</p>
   <button type="button" class="login" hidden>Log in again</button>
   <div class="device" hidden></div>
 </li>`).join('\n');
-  return `<section class="connections">
-<h1>Connections</h1>
-<p class="quiet">What goose reaches, one gateway each. A gateway that keeps a login of its own, such as Outlook, renews it here.</p>
+  const list = gateways.length
+    ? `<p class="quiet">What goose reaches, one gateway each. A gateway that keeps a login of its own, such as Outlook, renews it here.</p>
 <ul class="connection-list">
 ${rows}
-</ul>
+</ul>`
+    : '<p>No gateways yet. A gateway serves one MCP server to the agents and holds the calls that need your approval. Set <code>GATEWAYS</code> to list them, as the README describes.</p>';
+  const push = webPush
+    ? `<p class="push-state quiet" role="status">Asking this browser…</p>
+<div class="push-buttons"><button type="button" id="push-on" hidden>Turn on</button><button type="button" id="push-test" class="quiet-button" hidden>Send a test</button><button type="button" id="push-off" class="quiet-button" hidden>Turn off</button></div>`
+    : '<p class="quiet">Web Push is not set up on the server (<code>VAPID_PRIVATE_KEY_FILE</code>).</p>';
+  return `<section class="connections">
+<h1>Connections</h1>
+${list}
+</section>
+<section class="push" aria-labelledby="push-title"${webPush ? ' data-push="on"' : ''}>
+<h2 id="push-title">Notifications on this device</h2>
+<p class="quiet">A held call, a question from goose in the chat, and what a job reports.</p>
+${push}
 </section>`;
 }
 

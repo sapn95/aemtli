@@ -1,7 +1,8 @@
 # goose and the recipe runs can run shell commands, so they may reach DNS,
-# the model proxy, and the internet over HTTPS, and nothing private: not the
-# rest of the cluster, not the home network, not the Kubernetes API. Only the
-# web pod may open goose's port.
+# the model proxy, the MCP gateways, the web pod's notify port, and the
+# internet over HTTPS, and nothing private: not the rest of the cluster, not
+# the home network, not the Kubernetes API. Only the web pod may open goose's
+# port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -44,6 +45,13 @@ spec:
               aemtli.sapn.ch/role: mcp-gateway
       ports:
         - port: 8080
+    # The web pod's notify port, where a job hands in its push (with a token).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aemtli-web
+      ports:
+        - port: 8082
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -89,8 +97,8 @@ spec:
       ports:
         - {port: 443, protocol: TCP}
 ---
-# The web pod reaches DNS, goose, the Kubernetes API and Cloudflare's key
-# endpoint. Who may reach it is the overlay's business (the tunnel, here).
+# The web pod reaches DNS, goose, the Kubernetes API, Cloudflare's key
+# endpoint and the Web Push services. Who may reach it is the overlay's business (the tunnel, here).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -124,7 +132,8 @@ spec:
               aemtli.sapn.ch/role: mcp-gateway
       ports:
         - port: 8081
-    # The API server (6443 on k3s, 443 elsewhere) and the Access certs.
+    # The API server (6443 on k3s, 443 elsewhere), the Access certs, and the
+    # push services a Web Push goes to.
     - ports:
         - {port: 443, protocol: TCP}
         - {port: 6443, protocol: TCP}
