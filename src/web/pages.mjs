@@ -357,7 +357,7 @@ ${items.length ? `<ul class="history">\n${rows}\n</ul>` : '<p class="quiet">Noth
 export function dashboard({ items, week, timeZone, now = new Date(), needs = { items: [], unreachable: [] }, chat = false }) {
   if (!items.length) {
     return `${needsYou(needs, timeZone, chat)}<section class="empty"><h1>No chores yet</h1>
-<p>A chore is a goose recipe or a job, plus a CronJob that runs it. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p></section>`;
+<p>A chore is a goose recipe or a job, plus a CronJob that runs it. Give the CronJob the label <code>app.kubernetes.io/part-of: aemtli</code> and it shows up here.</p>${RELOAD}</section>`;
   }
   return `${needsYou(needs, timeZone, chat)}
 ${plan(items, week, now, timeZone)}`;

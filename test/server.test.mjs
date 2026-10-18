@@ -588,6 +588,17 @@ test('in the app on a phone the dashboard and a chore have a reload button, and 
     assert.match((await call('/recipes/hello')).body, /<button type="button" class="reload quiet-button">Reload<\/button>/);
     assert.doesNotMatch((await call(`/recipes/hello/runs/${RUN_ID}`)).body, /class="reload/);
     assert.doesNotMatch((await call('/approvals')).body, /class="reload/);
+  }));
+
+test('the reload button is there on an empty dashboard too', () =>
+  withUi(async ({ call }) => {
+    const page = (await call('/')).body;
+    assert.match(page, /No chores yet/);
+    assert.match(page, /<button type="button" class="reload quiet-button">Reload<\/button><\/section>/);
+  }, { k8s: { listCronJobs: async () => [], listJobs: async () => [] } }));
+
+test('the reload button is styled for the app only', () =>
+  withUi(async ({ call }) => {
     const css = (await call('/static/app.css')).body;
     assert.match(css, /\.reload \{ display: none; \}/);
     assert.match(css, /@media \(display-mode: standalone\) \{\n {2}\.reload \{ display: inline-flex; \}/);
