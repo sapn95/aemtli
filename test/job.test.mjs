@@ -269,6 +269,13 @@ test('a push whose connection is refused is tried again, an answer is not', asyn
   const log = read(dataDir, 'retry', run.id, 'run.log');
   assert.equal(log.match(/could not reach the web pod \(ECONNREFUSED\), trying again/g).length, 2 + 3);
   assert.match(log, /could not notify: fetch failed/);
+
+  // A timeout is not tried again: the push may have gone out already.
+  let timedOut = 0;
+  const slow = async () => { timedOut += 1; throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+  const again = await runJob({ name: 'retry', recipesDir, dataDir, env, anthropic: null, fetchImpl: slow, retryMs: 1 });
+  assert.equal(read(dataDir, 'retry', again.id, 'result.md'), 'false false\n');
+  assert.equal(timedOut, 2, 'one try each');
 });
 
 test('a title keeps its umlauts and is cut to one line a phone can show', async () => {
