@@ -1,5 +1,10 @@
 import { addCopyButtons } from './copy.js';
 import { registerServiceWorker } from './install.js';
+import { autoRefresh } from './refresh.js';
+
+// The page as the server sent it, read before anything below changes it
+// (copy buttons, the search filter), so refresh.js can tell news from that.
+const served = document.querySelector('main')?.innerHTML ?? '';
 
 registerServiceWorker();
 
@@ -20,7 +25,7 @@ for (const button of document.querySelectorAll('button.run')) {
     try {
       const res = await fetch(`/api/recipes/${encodeURIComponent(recipe)}/run`, { method: 'POST' });
       const body = await res.json().catch(() => ({}));
-      if (notice) notice.textContent = res.ok ? `Started ${recipe}. Reload in a minute to see how it went.` : `${recipe} did not start: ${body.error ?? res.status}`;
+      if (notice) notice.textContent = res.ok ? `Started ${recipe}. The page shows how it went once it is done.` : `${recipe} did not start: ${body.error ?? res.status}`;
     } catch (err) {
       if (notice) notice.textContent = `${recipe} did not start: ${err.message}`;
       button.disabled = false;
@@ -29,7 +34,42 @@ for (const button of document.querySelectorAll('button.run')) {
 }
 
 // Approve and Reject on held calls. The gateway runs an approved call before
-// it answers, so the outcome shown is what actually happened.
+// it answers, so the outcome shown is what actually happened. Once decided,
+// the card says so: its status, what came back, and no buttons any more.
+const DECIDED = { done: ['Done', 'succeeded'], failed: ['Failed', 'failed'], rejected: ['Rejected', 'none'] };
+
+/** A call's result as text, JSON laid out over lines. */
+function readable(result) {
+  const text = String(result ?? '');
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+/** Turns a held call's card into a decided one. */
+function settle(card, status, result) {
+  card.classList.add('decided');
+  card.querySelector('.say')?.remove();
+  card.querySelector('.decide')?.remove();
+  const [word, tone] = DECIDED[status] ?? [status, 'none'];
+  let chip = card.querySelector('.ask .status');
+  if (!chip) {
+    chip = document.createElement('span');
+    card.querySelector('.ask')?.append(' ', chip);
+  }
+  chip.className = `status ${tone}`;
+  chip.textContent = word;
+  if (result) {
+    const pre = document.createElement('pre');
+    pre.className = 'call-result';
+    pre.textContent = readable(result).slice(0, 20_000);
+    card.querySelector('.outcome').after(pre);
+    addCopyButtons(card);
+  }
+}
+
 for (const button of document.querySelectorAll('button.approve, button.reject')) {
   button.addEventListener('click', async () => {
     const card = button.closest('li');
@@ -46,14 +86,22 @@ for (const button of document.querySelectorAll('button.approve, button.reject'))
         body: JSON.stringify(say ? { say, chat } : {}),
       });
       const body = await res.json().catch(() => ({}));
-      if (res.status === 409) outcome.textContent = 'Someone already decided this one. Reload to see how.';
-      else if (res.status === 502) outcome.textContent = 'No answer yet. It may still be running: look on the Approvals page in a minute before trying again.';
+      if (res.status === 409) {
+        outcome.textContent = 'Someone already decided this one. The page shows how in a moment.';
+        settle(card, 'decided');
+        return;
+      }
+      if (res.status === 502) outcome.textContent = 'No answer yet. It may still be running: look on the Approvals page in a minute before trying again.';
       else if (!res.ok) outcome.textContent = `That did not work: ${body.error ?? res.status}`;
-      else if (body.status === 'rejected') outcome.textContent = 'Rejected. Nothing ran.';
-      else outcome.textContent = `${body.status === 'done' ? 'Done' : 'Failed'}: ${String(body.result ?? '').slice(0, 400)}`;
-      if (say && body.said) outcome.textContent += ' goose was told.';
-      else if (say && body.sayError) outcome.textContent += ` goose was not told: ${body.sayError}`;
-      card.classList.add('decided');
+      else {
+        const result = body.status === 'rejected' ? '' : String(body.result ?? '').trim();
+        if (body.status === 'rejected') outcome.textContent = 'Nothing ran.';
+        else if (body.status === 'done') outcome.textContent = result ? 'What came back:' : 'Done, with nothing to show.';
+        else outcome.textContent = result ? 'It failed. What came back:' : 'It failed, without saying why.';
+        if (say && body.said) outcome.textContent += ' goose was told.';
+        else if (say && body.sayError) outcome.textContent += ` goose was not told: ${body.sayError}`;
+        settle(card, body.status, result);
+      }
     } catch {
       // The connection dropped; the call may have run anyway. Not offering the
       // buttons again keeps it from running twice.
@@ -183,3 +231,5 @@ for (const star of document.querySelectorAll('button.fav')) {
     }
   });
 }
+
+autoRefresh(served);

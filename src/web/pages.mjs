@@ -404,7 +404,7 @@ const size = bytes => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 * 1024 ? `
  * the list of conversations and sends it; the server puts the run in front of
  * the question.
  */
-const askBox = (run, chat) => (chat ? `<section class="ask">
+const askBox = (run, chat) => (chat ? `<section class="ask-run">
 <h2>Ask goose</h2>
 <form id="ask" data-recipe="${esc(run.recipe)}" data-run="${esc(run.id)}">
   <label class="visually-hidden" for="ask-text">What goose should do about this run</label>
@@ -479,7 +479,7 @@ export function chatPage(on = true) {
     <label class="visually-hidden" for="input">Message</label>
     <textarea id="input" rows="3" placeholder="Ask goose something, or paste or drop an image here. Cmd+Enter sends."></textarea>
     <input type="file" id="pick" accept="image/*" multiple hidden>
-    <div class="composer-actions"><button type="submit" id="send">Send</button><button type="button" id="attach" class="quiet-button">Image</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button></div>
+    <div class="composer-actions"><button type="button" id="attach" class="quiet-button">Image</button><button type="button" id="cancel" class="quiet-button" disabled>Stop</button><button type="submit" id="send">Send</button></div>
   </form>
 </div>
 </section>`;
