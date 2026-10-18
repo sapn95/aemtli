@@ -80,7 +80,7 @@ test('every kind of problem is found once, with a key that stays, and the handgr
     'probe/https://board.example', 'probe/https://down.example',
   ]);
   const by = Object.fromEntries(problems.map(p => [p.key, p]));
-  assert.deepEqual(by['argo/pi-backup'].remedy, { action: 'refresh', app: 'pi-backup' });
+  assert.deepEqual(by['argo/pi-backup'].remedy, { action: 'refresh', namespace: 'argocd', app: 'pi-backup' });
   assert.deepEqual(by['pod/apps/Deployment/web'].remedy, { action: 'restart', namespace: 'apps', deployment: 'web' });
   assert.equal(by['pod/apps/StatefulSet/db'].remedy, undefined, 'an image that cannot be pulled waits for a fix in git');
   assert.equal(by['pod/apps/StatefulSet/db'].summary, 'StatefulSet apps/db: ImagePullBackOff');
@@ -196,15 +196,17 @@ test('the handgrips: restart, rerun, refresh and resync, each the patch or the J
     'GET /apis/batch/v1/namespaces/backup/cronjobs/pi-backup': cron,
     'POST /apis/batch/v1/namespaces/backup/jobs': body => ({ metadata: { name: `${body.metadata.generateName}x1` } }),
     'PATCH /apis/argoproj.io/v1alpha1/namespaces/argocd/applications/pi-backup': {},
+    'PATCH /apis/argoproj.io/v1alpha1/namespaces/argo-cd/applications/web': {},
     'PATCH /apis/external-secrets.io/v1/namespaces/aemtli/externalsecrets/aemtli-vapid': {},
   });
   const cluster = createCluster({ api, now: () => new Date(NOW) });
   assert.deepEqual(await cluster.restart({ namespace: 'apps', deployment: 'web' }), { restarted: 'apps/web' });
   assert.deepEqual(await cluster.rerun({ namespace: 'backup', cronjob: 'pi-backup' }), { started: 'pi-backup-heal-x1' });
-  assert.deepEqual(await cluster.refresh({ app: 'pi-backup' }), { refreshed: 'pi-backup' });
+  assert.deepEqual(await cluster.refresh({ app: 'pi-backup' }), { refreshed: 'argocd/pi-backup' });
+  assert.deepEqual(await cluster.refresh({ namespace: 'argo-cd', app: 'web' }), { refreshed: 'argo-cd/web' });
   assert.deepEqual(await cluster.resync({ namespace: 'aemtli', externalsecret: 'aemtli-vapid' }), { resynced: 'aemtli/aemtli-vapid' });
 
-  const [restart, , made, refresh, resync] = asked;
+  const [restart, , made, refresh, , resync] = asked;
   assert.equal(restart.contentType, 'application/strategic-merge-patch+json');
   assert.deepEqual(restart.body, { spec: { template: { metadata: { annotations: { 'kubectl.kubernetes.io/restartedAt': '2026-10-18T12:00:00.000Z' } } } } });
   assert.equal(made.body.metadata.generateName, 'pi-backup-heal-');

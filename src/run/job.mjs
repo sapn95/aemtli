@@ -115,6 +115,9 @@ function anthropicFrom(env) {
  * Runs job `name`, writing run.json, result.md and run.log under `dataDir`.
  * Resolves with the run record.
  */
+// Errors that mean the connection was never made, so a push is safe to try again.
+const CONNECT = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+
 export async function runJob({
   name,
   recipesDir,
@@ -281,9 +284,10 @@ export async function runJob({
         ...(click ? { click } : {}),
       };
       // A new pod may not reach anything for its first seconds, until the
-      // network policy knows it: a refused connection is tried again, three
-      // more times, 2, 4 and 8 seconds apart. An answer, even a refusal by
-      // the server, is not.
+      // network policy knows it: a connection that could not be made is
+      // tried again, three more times, 2, 4 and 8 seconds apart. Nothing
+      // else is: an answer, even a refusal by the server, or a timeout,
+      // after which the push may have gone out already.
       const post = () => fetchImpl(target.url, {
         method: 'POST',
         headers: {
@@ -304,7 +308,7 @@ export async function runJob({
             res = await post();
             break;
           } catch (err) {
-            if (attempt === 3) throw err;
+            if (attempt === 3 || !CONNECT.has(err.cause?.code)) throw err;
             log(`could not reach ${relay ? 'the web pod' : 'ntfy'} (${err.cause?.code ?? err.message}), trying again`);
             await new Promise(resolve => setTimeout(resolve, retryMs * 2 ** attempt));
           }

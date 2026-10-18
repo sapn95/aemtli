@@ -119,7 +119,7 @@ export function findProblems({ apps = [], deployments = [], replicaSets = [], po
       add({
         key: `argo/${app.metadata.name}`, kind: 'Application', namespace: app.metadata.namespace, name: app.metadata.name,
         summary: `Argo CD app ${app.metadata.name}: ${health}, ${sync}`,
-        remedy: { action: 'refresh', app: app.metadata.name },
+        remedy: { action: 'refresh', namespace: app.metadata.namespace, app: app.metadata.name },
       });
     }
   }
@@ -336,9 +336,9 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
     },
 
     /** Asks Argo CD to compare an application with git again (a hard refresh). */
-    async refresh({ app }) {
-      await api('PATCH', `/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${name(app, 'app')}`, { metadata: { annotations: { 'argocd.argoproj.io/refresh': 'hard' } } }, 'application/merge-patch+json');
-      return { refreshed: app };
+    async refresh({ namespace = 'argocd', app }) {
+      await api('PATCH', `/apis/argoproj.io/v1alpha1/namespaces/${name(namespace, 'namespace')}/applications/${name(app, 'app')}`, { metadata: { annotations: { 'argocd.argoproj.io/refresh': 'hard' } } }, 'application/merge-patch+json');
+      return { refreshed: `${namespace}/${app}` };
     },
 
     /** Asks ESO to fetch an ExternalSecret again. */
@@ -362,7 +362,7 @@ export function clusterTools(cluster) {
     { name: 'cluster_events', description: 'The warnings Kubernetes noted in a namespace, newest first, optionally for one object by name.', inputSchema: obj({ namespace: NS, name: { type: 'string' } }, ['namespace']), annotations: read, run: a => cluster.events(a) },
     { name: 'cluster_restart', description: 'Restarts a Deployment\'s pods one by one (kubectl rollout restart).', inputSchema: obj({ namespace: NS, deployment: { type: 'string' } }, ['namespace', 'deployment']), annotations: heal, run: a => cluster.restart(a) },
     { name: 'cluster_rerun', description: 'Starts a CronJob\'s Job now, from its template.', inputSchema: obj({ namespace: NS, cronjob: { type: 'string' } }, ['namespace', 'cronjob']), annotations: heal, run: a => cluster.rerun(a) },
-    { name: 'cluster_refresh', description: 'Asks Argo CD to compare an application with git again.', inputSchema: obj({ app: { type: 'string' } }, ['app']), annotations: heal, run: a => cluster.refresh(a) },
+    { name: 'cluster_refresh', description: 'Asks Argo CD to compare an application with git again.', inputSchema: obj({ namespace: { type: 'string', description: 'Where the Application lives; argocd when left out.' }, app: { type: 'string' } }, ['app']), annotations: heal, run: a => cluster.refresh(a) },
     { name: 'cluster_resync', description: 'Asks the External Secrets Operator to fetch an ExternalSecret again.', inputSchema: obj({ namespace: NS, externalsecret: { type: 'string' } }, ['namespace', 'externalsecret']), annotations: heal, run: a => cluster.resync(a) },
   ];
 }
