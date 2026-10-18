@@ -120,9 +120,12 @@ On a phone only the page scrolls. A wide table or code block scrolls
 sideways inside itself, the list of conversations folds away while one is
 open, and the box to write in stays at the bottom of the screen.
 
-Everything stays behind Access. Some iOS versions fetch the home-screen
-icon without the cookie; if the icon stays blank, an Access bypass for
-`/static/icons/*` and `/manifest.webmanifest` alone is enough, as neither
+Everything stays behind Access, the manifest and the icons too. Some iOS
+versions fetch the home-screen icon without the cookie, and then the icon
+stays blank. An Access bypass alone does not change that: the server checks
+the Access assertion itself and answers 403 without one. It would take a
+bypass for `/static/icons/*` and `/manifest.webmanifest` together with the
+server letting exactly those two through, which it does not do. Neither
 holds anything private.
 
 ## Jobs: code first, the model where it pays
