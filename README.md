@@ -23,6 +23,7 @@ goose at a provider with an API key, or at an Ollama on another machine.
 | `aemtli mcp-kanban` | The kanban board as MCP tools on stdio, for a gateway to run. Works with [byge](https://github.com/sapn95/byge) only. See [The kanban board](#the-kanban-board). |
 | `aemtli mcp-recipes` | The chores in the GitOps repository, and a pull request to change one. See [Chores that improve themselves](#chores-that-improve-themselves). |
 | `aemtli mcp-github` | The owner's repositories through a GitHub App: read, merge a green pull request, tag a release. See [The repositories](#the-repositories). |
+| `aemtli mcp-transport` | The Swiss public transport timetable: stations, connections and departure boards. See [Trains and buses](#trains-and-buses). |
 
 One image holds all six: goose, node and npm (for MCP servers started with
 `npx`), uv and python (for `uvx`), and the app.
@@ -442,6 +443,31 @@ A job finds its cards again by a reference at the end of the description,
 `[ämtli:<ref>]`. A card the owner archived counts as dealt with and is not
 made again.
 
+## Trains and buses
+
+`aemtli mcp-transport` gives goose the Swiss public transport timetable, so
+it can work out how to get to an appointment. It asks
+[transport.opendata.ch](https://transport.opendata.ch), a community-run API
+over the official timetable that needs no key:
+
+| Tool | |
+| --- | --- |
+| `transport_locations` | stations by name, and with `type: all` addresses and places too |
+| `transport_connections` | from one place to another: departure, arrival, duration, transfers, and each leg with its line, platform, delay and walks |
+| `transport_stationboard` | the next departures or arrivals at one station |
+
+Every tool only reads, so the gateway's policy can allow all of them. Times
+are Swiss local time. With `arrival: true`, `time` is when to be there by,
+and the answer is the last connections that still make it. A place the API
+does not know comes back as an error that names it, and goose looks it up
+with `transport_locations`. The API also sends every stop along the way;
+those are left out, which keeps an answer short.
+
+With the calendar gateway in the same chat, goose plans the way to an
+appointment: it reads the event's start and place, asks for connections that
+arrive a little before the start, and leaves time to walk from the stop to
+the door.
+
 ## Settings
 
 `aemtli web`:
@@ -480,6 +506,9 @@ its credentials.
 `aemtli mcp-kanban`: `KANBAN_URL` (the byge board inside the cluster, e.g.
 `http://kanban.kanban.svc.cluster.local:17808`), and for byge's service
 identity `KANBAN_AS` and `KANBAN_USER_HEADER`.
+
+`aemtli mcp-transport` needs no setting. `TRANSPORT_API` points it at
+another address of the same API (`https://transport.opendata.ch/v1`).
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
 `MODEL_AUTH_HEADER` (`x-api-key`; `authorization` for OpenAI-style APIs),
