@@ -233,7 +233,11 @@ a.mark:hover { text-decoration: underline; }
 .history .decided { border-top: 1px solid var(--rule); padding: 0.75rem 0; }
 .ask { margin: 0; font-size: 1.0625rem; }
 .ask .gw { font-weight: 700; }
-.ask .status { margin-left: 0.4rem; font-size: 0.875rem; }
+/* The state of a held call as a small label, tinted in its own colour. */
+.ask .status {
+  margin-left: 0.4rem; font-size: 0.8125rem; white-space: nowrap;
+  padding: 0.05rem 0.55rem; border-radius: 999px; background: color-mix(in srgb, currentColor 14%, transparent);
+}
 .asked { margin: 0.35rem 0 0; color: var(--pencil); font-size: 0.875rem; }
 .ask .tool { font: 0.8125rem ui-monospace, "SF Mono", Menlo, monospace; color: var(--pencil); margin-left: 0.3rem; }
 .hidden-char { color: var(--redpen); border: 1px solid currentColor; border-radius: 3px; padding: 0 0.2rem; font-size: 0.75em; }
@@ -357,14 +361,15 @@ button:disabled { background: transparent; border-color: var(--rule); color: var
 .files .quiet { color: var(--pencil); font-size: 0.875rem; }
 .log pre { font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 0.75rem 1rem; max-height: 28rem; overflow: auto; }
 
-/* Asking goose about the run one is looking at. */
-.ask { margin: 1.75rem 0 0; max-width: 46rem; }
-.ask h2 { font-size: 1rem; margin: 0 0 0.5rem; }
-.ask textarea {
+/* Asking goose about the run one is looking at. Not .ask: that is the
+   first line of a held call, and this margin once opened a gap above it. */
+.ask-run { margin: 1.75rem 0 0; max-width: 46rem; }
+.ask-run h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+.ask-run textarea {
   width: 100%; font: inherit; color: var(--ink); background: var(--sheet);
   border: 1px solid var(--rule); border-radius: 6px; padding: 0.65rem 0.8rem; resize: vertical;
 }
-.ask textarea::placeholder { color: var(--pencil); }
+.ask-run textarea::placeholder { color: var(--pencil); }
 .ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-top: 0.6rem; }
 .ask-actions .say-where { margin-right: auto; }
 
@@ -464,12 +469,15 @@ select { font: inherit; color: var(--ink); background: var(--sheet); border: 1px
 .attached .shot button { position: absolute; top: 0.15rem; right: 0.15rem; padding: 0 0.45rem; background: var(--paper); }
 .msg.note { color: var(--pencil); font-size: 0.875rem; }
 
-.composer { display: flex; gap: 0.75rem; align-items: flex-end; margin-top: 0.75rem; }
+/* The box to write in takes the width; under it, Image on the left and Stop
+   and Send on the right, the way a message is sent in most chats. */
+.composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
 .composer textarea {
-  flex: 1; font: inherit; color: var(--ink); background: var(--sheet);
+  font: inherit; color: var(--ink); background: var(--sheet);
   border: 1px solid var(--rule); border-radius: 6px; padding: 0.65rem 0.8rem; resize: vertical;
 }
-.composer-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+.composer-actions { display: flex; align-items: center; gap: 0.5rem; }
+.composer-actions #attach { margin-right: auto; }
 
 .empty { margin-top: 2rem; max-width: 40rem; }
 
@@ -563,11 +571,9 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
   #new { padding: 0.35rem 0.7rem; font-size: 0.875rem; border-width: 1px; }
   .chat { min-height: 0; max-height: none; overflow: visible; padding: 0.75rem; }
   .composer {
-    flex-direction: column; align-items: stretch;
     position: sticky; bottom: 0; z-index: 2; background: var(--paper);
     margin-top: 0.5rem; padding: 0.6rem 0 calc(0.6rem + env(safe-area-inset-bottom));
   }
-  .composer-actions { flex-direction: row; }
   /* Below 16 px Safari zooms into a field as it is tapped. */
   input, select, textarea, .find input, .say-text, .chip { font-size: max(16px, 1rem); }
   /* About 44 px to tap, the size of a fingertip. The star keeps its size on

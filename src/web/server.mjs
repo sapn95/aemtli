@@ -28,6 +28,7 @@ const STATIC = {
   'copy.js': 'text/javascript',
   'push.js': 'text/javascript',
   'install.js': 'text/javascript',
+  'refresh.js': 'text/javascript',
   'fonts/schibsted-grotesk.woff2': 'font/woff2',
   'fonts/OFL.txt': 'text/plain',
 };

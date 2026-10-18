@@ -670,3 +670,17 @@ test('notifications on this device: the Connections page offers them, and the AP
     assert.equal(res.status, 503);
   });
 });
+
+test('the pages that show runs refresh themselves: app.js starts refresh.js with the page as it was served', () =>
+  withUi(async ({ call }) => {
+    const app = (await call('/static/app.js')).body;
+    assert.match(app, /import \{ autoRefresh \} from '\.\/refresh\.js';/);
+    assert.ok(app.indexOf("const served = document.querySelector('main')?.innerHTML") < app.indexOf('addCopyButtons(document'), 'read before the copy buttons change it');
+    const refresh = await call('/static/refresh.js');
+    assert.equal(refresh.status, 200);
+    assert.equal(refresh.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.equal(refresh.headers['cache-control'], 'no-cache', 'an imported script is asked for again each time');
+    for (const page of ['/', '/recipes/hello', `/recipes/hello/runs/${RUN_ID}`]) {
+      assert.match((await call(page)).body, /src="\/static\/app\.js\?v=0\.0\.0-test"/, page);
+    }
+  }));
