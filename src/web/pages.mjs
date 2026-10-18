@@ -86,8 +86,12 @@ ${script ? `<script type="module" src="/static/${esc(script)}?v=${esc(version)}"
 
 /**
  * The web app manifest. Behind Access like every page, which is why the
- * layout links it with its cookie. The colours are the paper and the royal
- * blue of app.css; the maskable icon keeps its tick inside the safe zone.
+ * layout links it with its cookie. Both colours are the paper of the dark
+ * theme. Chrome on Android paints the manifest's colour in a band under an
+ * installed app, where the gesture bar is, and reads no dark variant of it;
+ * the light paper made that band a white bar under the dark page. Once a
+ * page has loaded, the layout's theme-color tags colour the status bar for
+ * either scheme. The maskable icon keeps its tick inside the safe zone.
  */
 export function manifest(version) {
   const icon = (name, size, purpose) => ({ src: `/static/icons/${name}?v=${encodeURIComponent(version)}`, sizes: `${size}x${size}`, type: 'image/png', purpose });
@@ -99,8 +103,8 @@ export function manifest(version) {
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    background_color: '#f5f7f8',
-    theme_color: '#2b4fd8',
+    background_color: '#1f2b27',
+    theme_color: '#1f2b27',
     icons: [icon('icon-192.png', 192, 'any'), icon('icon-512.png', 512, 'any'), icon('icon-maskable-512.png', 512, 'maskable')],
   };
 }
