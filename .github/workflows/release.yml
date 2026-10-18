@@ -2,7 +2,9 @@
 # with a provenance attestation. GITHUB_TOKEN may push to this repository's
 # own package, so there is no token to store.
 #
-# Release with: npm version patch && git push --follow-tags
+# A release is a commit of its own on a PR (npm version --no-git-tag-version,
+# "Release x.y.z"); after the merge, tag that commit vx.y.z and push the tag.
+# AGENTS.md has the whole sequence.
 name: release
 
 on:
