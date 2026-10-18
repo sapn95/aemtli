@@ -14,8 +14,14 @@
 //   refresh   an Argo CD application that is out of sync or degraded
 //   resync    an ExternalSecret that is not ready (ESO's force-sync)
 //
-// Logs are cut and tokens and passwords in them blanked before they leave,
-// since they go on to the model.
+// What may be read and touched is narrowed by namespace allow lists the
+// deployment sets (CLUSTER_LOG_NAMESPACES, CLUSTER_HEAL_NAMESPACES,
+// CLUSTER_RERUN_NAMESPACES); without one, that tool refuses. A log can hold a
+// credential, and whoever reads it may be a model that was talked into
+// sending it on, so the namespaces of the secret store, the GitOps controller
+// and the tunnel are left out there, and what is read is cut and blanked
+// before it leaves. The ClusterRole in the overlay is narrowed the same way,
+// so the lists hold even if this code is bypassed.
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -218,20 +224,48 @@ export function findProblems({ apps = [], deployments = [], replicaSets = [], po
   return problems;
 }
 
-/** A log with tokens and passwords blanked, at most `max` characters from the end. */
+// What a credential looks like in a log line. Not a guarantee, a backstop:
+// the namespace allow list is what keeps the secret stores' logs out.
+const BLANK = [
+  // Private keys, whole blocks.
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[a private key, blanked]'],
+  // Authorization and cookie headers, as text or as JSON.
+  [/(["']?(?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest)?\s*)[^\s"',;]+/gi, '$1[blanked]'],
+  [/(["']?(?:set-)?cookie["']?\s*[:=]\s*["']?)[^"'\n]+/gi, '$1[blanked]'],
+  // Credentials in a URL.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, '$1[blanked]@'],
+  // key=value and "key": "value" for names that hold secrets.
+  [/((?:^|[\s"',;{(&?])["']?[\w.-]*(?:token|password|passwd|pwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|signature|code)["']?\s*[:=]\s*["']?)[^\s"',;&)}]+/gi, '$1[blanked]'],
+  // --token x, --password=x.
+  [/(--[\w-]*(?:token|password|secret|key)[\w-]*[=\s]+)\S+/gi, '$1[blanked]'],
+  // Tokens that say what they are by their prefix.
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{20,}|xox[abprs]-[\w-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16}|cfat_[\w-]{20,}|tk_[A-Za-z0-9]{20,})\b/g, '[a token, blanked]'],
+  [/\b(eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,})\b/g, '[a JWT, blanked]'],
+];
+
+/** A log with what looks like a credential blanked, at most `max` characters from the end. */
 export function redact(text, max = 12_000) {
-  return String(text)
-    .replace(/(authorization:\s*(bearer|basic)\s+)\S+/gi, '$1[blanked]')
-    .replace(/((?:token|password|passwd|secret|api[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',;]+/gi, '$1[blanked]')
-    .replace(/\b(eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,})\b/g, '[a JWT, blanked]')
-    .slice(-max);
+  let out = String(text);
+  for (const [pattern, replacement] of BLANK) out = out.replace(pattern, replacement);
+  return out.slice(-max);
+}
+
+/** A namespace allow list from its setting: comma-separated names. */
+export function namespaces(setting) {
+  return new Set(String(setting ?? '').split(',').map(s => s.trim()).filter(Boolean));
 }
 
 /**
  * The cluster client: `api` is createKubeApi's function, `fetchImpl` and
  * `probes` the public addresses to look at, `now` the clock.
  */
-export function createCluster({ api, probes = [], fetchImpl = fetch, now = () => new Date() }) {
+export function createCluster({ api, probes = [], fetchImpl = fetch, now = () => new Date(), logNamespaces = new Set(), healNamespaces = new Set(), rerunNamespaces = new Set() }) {
+  /** The namespace, if `allowed` names it; an error that says which list it is missing from otherwise. */
+  const within = (allowed, namespace, what) => {
+    name(namespace, 'namespace');
+    if (!allowed.has(namespace)) throw Object.assign(new Error(`${what} is not allowed in namespace ${namespace} (allowed: ${[...allowed].join(', ') || 'none'})`), { status: 403 });
+    return namespace;
+  };
   const list = async path => (await api('GET', path)).items ?? [];
   // A kind that is not installed (no Argo CD, no ESO) is no error: it has none.
   const optional = path => list(path).catch(err => (/: 404 /.test(err.message) ? [] : Promise.reject(err)));
@@ -248,6 +282,8 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
   async function rerun(namespace, cronjob) {
     const cron = await api('GET', `/apis/batch/v1/namespaces/${namespace}/cronjobs/${cronjob}`);
+    // Someone switched it off; running it anyway is not a repair.
+    if (cron.spec?.suspend) throw Object.assign(new Error(`${namespace}/${cronjob} is suspended`), { status: 409 });
     const spec = structuredClone(cron.spec.jobTemplate.spec);
     const job = {
       apiVersion: 'batch/v1', kind: 'Job',
@@ -286,7 +322,7 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
     /** The last lines a pod wrote, or a Job's or Deployment's newest pod. */
     async logs({ namespace, pod, job, deployment, container, previous = false, lines = 100 }) {
-      name(namespace, 'namespace');
+      within(logNamespaces, namespace, 'reading logs');
       if (!Number.isInteger(lines) || lines < 1 || lines > 500) throw bad('lines is a whole number from 1 to 500');
       let target = pod && name(pod, 'pod');
       if (!target) {
@@ -310,7 +346,7 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
     /** The warnings Kubernetes noted in a namespace, newest first, at most 30. */
     async events({ namespace, name: object }) {
-      name(namespace, 'namespace');
+      within(logNamespaces, namespace, 'reading events');
       const field = ['type=Warning', ...(object ? [`involvedObject.name=${name(object, 'name')}`] : [])].join(',');
       const items = await list(`/api/v1/namespaces/${namespace}/events?fieldSelector=${encodeURIComponent(field)}`);
       return {
@@ -323,7 +359,7 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
     /** kubectl rollout restart: a new pod template annotation, so the pods are replaced one by one. */
     async restart({ namespace, deployment }) {
-      const path = `/apis/apps/v1/namespaces/${name(namespace, 'namespace')}/deployments/${name(deployment, 'deployment')}`;
+      const path = `/apis/apps/v1/namespaces/${within(healNamespaces, namespace, 'a restart')}/deployments/${name(deployment, 'deployment')}`;
       await api('PATCH', path, { spec: { template: { metadata: { annotations: { 'kubectl.kubernetes.io/restartedAt': now().toISOString() } } } } }, 'application/strategic-merge-patch+json');
       return { restarted: `${namespace}/${deployment}` };
     },
@@ -331,7 +367,7 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
     /** A Job from a CronJob's template now, like kubectl create job --from. */
     async rerun({ namespace, cronjob }) {
       // async, so a bad name is a rejection like every other error here.
-      const started = await rerun(name(namespace, 'namespace'), name(cronjob, 'cronjob'));
+      const started = await rerun(within(rerunNamespaces, namespace, 'a rerun'), name(cronjob, 'cronjob'));
       return started;
     },
 
@@ -343,7 +379,7 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
     /** Asks ESO to fetch an ExternalSecret again. */
     async resync({ namespace, externalsecret }) {
-      await api('PATCH', `/apis/external-secrets.io/v1/namespaces/${name(namespace, 'namespace')}/externalsecrets/${name(externalsecret, 'externalsecret')}`, { metadata: { annotations: { 'force-sync': String(now().getTime()) } } }, 'application/merge-patch+json');
+      await api('PATCH', `/apis/external-secrets.io/v1/namespaces/${within(healNamespaces, namespace, 'a resync')}/externalsecrets/${name(externalsecret, 'externalsecret')}`, { metadata: { annotations: { 'force-sync': String(now().getTime()) } } }, 'application/merge-patch+json');
       return { resynced: `${namespace}/${externalsecret}` };
     },
   };

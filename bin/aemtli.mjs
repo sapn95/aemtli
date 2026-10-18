@@ -16,7 +16,7 @@ import { createRecipes, recipeTools } from '../src/mcp/recipes.mjs';
 import { createGitHub, githubTools } from '../src/mcp/github.mjs';
 import { createAppAuth } from '../src/mcp/github-app.mjs';
 import { createTransport, transportTools } from '../src/mcp/transport.mjs';
-import { createCluster, createKubeApi, clusterTools } from '../src/mcp/cluster.mjs';
+import { createCluster, createKubeApi, clusterTools, namespaces } from '../src/mcp/cluster.mjs';
 import { serveStdio } from '../src/mcp/stdio.mjs';
 import { parseGateways, createGatewayClient, createNotifier, createPush } from '../src/web/approvals.mjs';
 import { createWebPush, loadVapidKey } from '../src/web/webpush.mjs';
@@ -205,6 +205,7 @@ async function web() {
   else if (env.NOTIFY_PORT) {
     const notifyServer = await startNotifyServer({
       notify: push,
+      origin: publicOrigin,
       token: readFileSync(required('NOTIFY_TOKEN_FILE'), 'utf8').trim(),
       port: Number(env.NOTIFY_PORT),
       log,
@@ -391,11 +392,24 @@ async function mcpTransport() {
 /**
  * `aemtli mcp-cluster`: what is wrong in the cluster and the handgrips that
  * put most of it right, as MCP tools on stdio, with the pod's own service
- * account. CLUSTER_PROBES lists public addresses to look at, comma-separated.
+ * account. CLUSTER_PROBES lists public addresses to look at; the three
+ * CLUSTER_*_NAMESPACES settings say where logs may be read, Deployments
+ * restarted and ExternalSecrets resynced, and CronJobs run again. All are
+ * comma-separated; a list left out allows nothing.
  */
 async function mcpCluster() {
   const probes = (env.CLUSTER_PROBES ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  await serveStdio({ name: 'aemtli-cluster', version, tools: clusterTools(createCluster({ api: createKubeApi(), probes })) });
+  await serveStdio({
+    name: 'aemtli-cluster',
+    version,
+    tools: clusterTools(createCluster({
+      api: createKubeApi(),
+      probes,
+      logNamespaces: namespaces(env.CLUSTER_LOG_NAMESPACES),
+      healNamespaces: namespaces(env.CLUSTER_HEAL_NAMESPACES),
+      rerunNamespaces: namespaces(env.CLUSTER_RERUN_NAMESPACES),
+    })),
+  });
 }
 
 const [command, ...rest] = process.argv.slice(2);
