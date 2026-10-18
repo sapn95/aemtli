@@ -36,7 +36,7 @@ for (const button of document.querySelectorAll('button.run')) {
 // Approve and Reject on held calls. The gateway runs an approved call before
 // it answers, so the outcome shown is what actually happened. Once decided,
 // the card says so: its status, what came back, and no buttons any more.
-const DECIDED = { done: ['Done', 'succeeded'], failed: ['Failed', 'failed'], rejected: ['Rejected', 'none'] };
+const DECIDED = { done: ['Done', 'succeeded'], failed: ['Failed', 'failed'], rejected: ['Rejected', 'none'], decided: ['Decided', 'none'] };
 
 /** A call's result as text, JSON laid out over lines. */
 function readable(result) {
