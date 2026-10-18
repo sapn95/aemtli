@@ -116,8 +116,8 @@ motif of `public/icon.svg`, so the repo holds no PNG files.
 On Android, Chrome paints the manifest's colour in a band under the
 installed app, where the gesture bar is. A manifest has one colour for both
 themes, so it is the paper of the dark theme. With the phone in light mode
-that band is dark. The status bar follows the phone's theme once a page has
-loaded.
+that band is dark, and so is the screen shown while the app starts. The
+status bar follows the phone's theme once a page has loaded.
 
 A service worker (`/sw.js`) keeps the versioned static files and a page that
 says there is no connection. It never keeps a page or anything under
