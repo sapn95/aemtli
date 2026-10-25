@@ -25,14 +25,14 @@
     "url": "git+https://github.com/sapn95/aemtli.git"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
-    "markdown-it": "^15.0.2",
+    "@anthropic-ai/sdk": "^1.1.0",
+    "markdown-it": "^15.0.3",
     "yaml": "^2.9.1",
-    "zxing-wasm": "3.1.5"
+    "zxing-wasm": "3.1.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "c8": "^12.0.0",
-    "eslint": "^10.12.0"
+    "eslint": "^10.13.0"
   }
 }
