@@ -28,7 +28,9 @@ createInterface({ input: process.stdin }).on('line', line => {
       lists += 1;
       // FAKE_MCP_LIST=fail-once: the first list is an error, as a server
       // that is still starting answers. =paged: two tools a page.
+      // =endless: always one more page.
       if (process.env.FAKE_MCP_LIST === 'fail-once' && lists === 1) return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'not ready' } });
+      if (process.env.FAKE_MCP_LIST === 'endless') return ok({ tools: TOOLS, nextCursor: String(lists) });
       if (process.env.FAKE_MCP_LIST === 'paged') {
         const from = Number(msg.params?.cursor ?? 0);
         return ok({ tools: TOOLS.slice(from, from + 2), ...(from + 2 < TOOLS.length ? { nextCursor: String(from + 2) } : {}) });

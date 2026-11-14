@@ -141,6 +141,8 @@ export function createGateway({ command, env = process.env, policy, approvals, a
         cursor = response.result.nextCursor;
         if (!cursor) break;
       }
+      // Cut short, the list would refuse what is on the pages not read.
+      if (cursor) throw new Error(`the server lists its tools over more than ${MAX_TOOL_PAGES} pages`);
       session.tools = names;
     }
     return session.tools;
