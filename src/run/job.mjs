@@ -111,13 +111,16 @@ function anthropicFrom(env) {
   return new Anthropic({ apiKey: env.ANTHROPIC_API_KEY ?? 'placeholder', baseURL: env.ANTHROPIC_HOST, maxRetries: 2, timeout: 120_000 });
 }
 
+// A job's run.log stops here, like a recipe's (runner.mjs).
+const MAX_LOG = 8 * 1024 * 1024;
+
+// Errors that mean the connection was never made, so a push is safe to try again.
+const CONNECT = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+
 /**
  * Runs job `name`, writing run.json, result.md and run.log under `dataDir`.
  * Resolves with the run record.
  */
-// Errors that mean the connection was never made, so a push is safe to try again.
-const CONNECT = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
-
 export async function runJob({
   name,
   recipesDir,
@@ -143,7 +146,15 @@ export async function runJob({
   const record = { recipe: name, id, trigger, kind: 'job', status: 'running', startedAt: started.toISOString(), model: null };
   writeJsonAtomic(join(dir, 'run.json'), record);
   const logPath = join(dir, 'run.log');
-  const log = line => appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
+  // Capped like a recipe's run.log: a job that logs per item must not fill
+  // the volume, and the UI only shows the tail anyway.
+  let logged = 0;
+  const log = line => {
+    if (logged >= MAX_LOG) return;
+    const text = `${new Date().toISOString()} ${line}\n`;
+    logged += Buffer.byteLength(text);
+    appendFileSync(logPath, logged >= MAX_LOG ? `[log cut at ${MAX_LOG / 1024 / 1024} MB]\n` : text);
+  };
 
   // Next to the job's runs, on the one volume a run may write.
   const statePath = join(dataDir, 'runs', name, 'state.json');
@@ -209,12 +220,6 @@ export async function runJob({
       return entry;
     },
     /**
-     * The QR codes on the first `pages` pages of a PDF, as their text, in
-     * page order: pdftoppm draws the pages, ZXing reads the codes. An empty
-     * list when there are none. A page the reader fails on fails the call:
-     * a bill on it would otherwise be missed without a word.
-     */
-    /**
      * The Swiss QR bills on a PDF: for each code that is one, { ok, bill }
      * or { ok: false, why } from swissqr.mjs. Other codes are left out.
      */
@@ -225,6 +230,12 @@ export async function runJob({
     paymentFile({ debtor, payments, messageId }) {
       return buildPain001({ debtor, payments, messageId, now: now() });
     },
+    /**
+     * The QR codes on the first `pages` pages of a PDF, as their text, in
+     * page order: pdftoppm draws the pages, ZXing reads the codes. An empty
+     * list when there are none. A page the reader fails on fails the call:
+     * a bill on it would otherwise be missed without a word.
+     */
     async qr(bytes, { pages = 8 } = {}) {
       const pdf = Buffer.from(bytes);
       if (pdf.length > QR_PDF_MAX) throw new Error(`a PDF of ${pdf.length} bytes is over the ${QR_PDF_MAX} the QR reader takes`);

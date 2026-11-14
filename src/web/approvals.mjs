@@ -173,11 +173,14 @@ export function createNotifier({ client, push, stateFile, clickUrl, log = consol
   };
 
   async function tick() {
-    const { items } = await client.pending();
+    const { items, unreachable = [] } = await client.pending();
     const keys = new Set(items.map(r => `${r.gateway}/${r.id}`));
+    // A gateway that missed this round still holds its calls; forgetting
+    // them would push each one again as soon as it answers.
+    const silent = new Set(unreachable.map(u => u.name));
     let changed = false;
     for (const key of sent) {
-      if (!keys.has(key)) {
+      if (!keys.has(key) && !silent.has(key.slice(0, key.indexOf('/')))) {
         sent.delete(key);
         changed = true;
       }

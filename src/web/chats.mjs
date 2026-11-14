@@ -443,8 +443,9 @@ export function createChatBroker({ connect, cwd, mcpServers = [], notify = () =>
     },
 
     /**
-     * Sends a message, with images checked by readImages. Resolves once goose
-     * took it; the answer streams.
+     * Sends a message, with images checked by readImages. Resolves once the
+     * message is on its way, not when goose has it: the answer streams, and
+     * a failure reaches the watchers as an error event.
      */
     async say(id, text, pictures = []) {
       const c = await prepared(id);

@@ -570,3 +570,17 @@ test('a card a job keeps carries the address to look it up, from KANBAN_PUBLIC_U
     for (const s of servers) s.close();
   }
 });
+
+test('a job that logs too much has its run.log cut at 8 MB, once', async () => {
+  const { recipesDir, dataDir } = dirs({ chatty: `export default async function (ctx) {
+  const line = 'x'.repeat(1024 * 1024);
+  for (let i = 0; i < 10; i++) ctx.log(line);
+  return 'done';
+}
+` });
+  const run = await runJob({ name: 'chatty', recipesDir, dataDir, env: {} });
+  assert.equal(run.status, 'succeeded');
+  const log = read(dataDir, 'chatty', run.id, 'run.log');
+  assert.ok(log.length <= 8 * 1024 * 1024, `${log.length} bytes`);
+  assert.equal(log.match(/\[log cut at 8 MB\]/g)?.length, 1);
+});

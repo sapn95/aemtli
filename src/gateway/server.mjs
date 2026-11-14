@@ -16,6 +16,8 @@ import { parsePolicy } from './policy.mjs';
 import { createApprovals, APPROVAL_ID } from './approvals.mjs';
 
 const MAX_BODY = 1024 * 1024;
+// A server that hands out a next cursor forever is not listed forever.
+const MAX_TOOL_PAGES = 20;
 const PROTOCOL = '2025-06-18';
 // What passes to the server. Resources, prompts, completions and the rest are
 // not policed, so they are not forwarded either.
@@ -123,11 +125,23 @@ export function createGateway({ command, env = process.env, policy, approvals, a
     });
   }
 
-  /** The names the server itself lists, asked once per session. */
+  /**
+   * The names the server itself lists, asked once per session, every page of
+   * them. A failed answer is not cached: as an empty list it would refuse
+   * every call for the rest of the session.
+   */
   async function listed(session) {
     if (!session.tools) {
-      const response = await session.child.request('tools/list', {});
-      session.tools = new Set((response.result?.tools ?? []).map(t => t.name));
+      const names = new Set();
+      let cursor;
+      for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+        const response = await session.child.request('tools/list', cursor ? { cursor } : {});
+        if (!response.result) throw new Error(`the server did not list its tools: ${response.error?.message ?? 'no answer'}`);
+        for (const t of response.result.tools ?? []) names.add(t.name);
+        cursor = response.result.nextCursor;
+        if (!cursor) break;
+      }
+      session.tools = names;
     }
     return session.tools;
   }

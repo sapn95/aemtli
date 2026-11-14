@@ -139,6 +139,23 @@ test('one push per new held call, with no arguments in it, and none twice, also 
     assert.equal(pushes.length, 9, 'and none of the seven again');
   }));
 
+test('a gateway that misses a round keeps its calls, so they are not pushed again', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aemtli-notify-'));
+  const pushes = [];
+  const held = { gateway: 'epost', gatewayTitle: 'ePost', id: 'a1', tool: 'epost_delete_letter', status: 'pending' };
+  let answer = { items: [held], unreachable: [] };
+  const notifier = createNotifier({ client: { pending: async () => answer }, push: async p => pushes.push(p), stateFile: join(dir, 'notified.json'), log: () => {} });
+  await notifier.tick();
+  answer = { items: [], unreachable: [{ name: 'epost', title: 'ePost', error: 'timed out' }] };
+  await notifier.tick();
+  answer = { items: [held], unreachable: [] };
+  await notifier.tick();
+  assert.equal(pushes.length, 1, 'one push for the call, though its gateway was away for a round');
+  answer = { items: [], unreachable: [] };
+  await notifier.tick();
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'notified.json'), 'utf8')), [], 'decided while the gateway answers: forgotten');
+});
+
 test('the UI shows held calls with their arguments escaped, and decides them same-origin only', () =>
   withGateway(async ({ url, hold, dir }) => {
     const id = await hold({ to: '<script>alert(1)</script>', body: 'line one\nline two' });

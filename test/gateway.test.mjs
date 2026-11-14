@@ -127,6 +127,21 @@ test('the tool list hides what is denied and says what needs approval', () =>
     assert.equal(denied.body.error.message, 'Unknown tool: secret_thing');
   }));
 
+test('a failed tool list is not kept for the session, and every page counts', async () => {
+  await withGateway(async ({ rpc, open }) => {
+    const sid = await open();
+    const first = await rpc('tools/call', { name: 'read_thing', arguments: { id: '1' } }, sid);
+    assert.match(first.body.error.message, /did not list its tools: not ready/);
+    const again = await rpc('tools/call', { name: 'read_thing', arguments: { id: '2' } }, sid);
+    assert.match(again.body.result.content[0].text, /^read_thing \{"id":"2"\}/, 'the next call asks again');
+  }, { env: { FAKE_MCP_LIST: 'fail-once' } });
+  await withGateway(async ({ rpc, open }) => {
+    const sid = await open();
+    // Two tools a page: secret_status is alone on the third.
+    assert.match((await rpc('tools/call', { name: 'secret_status', arguments: {} }, sid)).body.result.content[0].text, /Not logged in/);
+  }, { env: { FAKE_MCP_LIST: 'paged' }, policy: 'allow: [read_*, secret_status]\n' });
+});
+
 test('a call that needs approval is held, once, and runs only when approved', () =>
   withGateway(async ({ rpc, open, admin, lines }) => {
     const sid = await open();
