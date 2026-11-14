@@ -15,6 +15,7 @@ const TOOLS = [
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`);
 let calls = 0;
 let loggedIn = false;
+let lists = 0;
 
 createInterface({ input: process.stdin }).on('line', line => {
   const msg = JSON.parse(line);
@@ -24,6 +25,14 @@ createInterface({ input: process.stdin }).on('line', line => {
     case 'initialize':
       return ok({ protocolVersion: msg.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fake-mcp', version: '1.0.0' } });
     case 'tools/list':
+      lists += 1;
+      // FAKE_MCP_LIST=fail-once: the first list is an error, as a server
+      // that is still starting answers. =paged: two tools a page.
+      if (process.env.FAKE_MCP_LIST === 'fail-once' && lists === 1) return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'not ready' } });
+      if (process.env.FAKE_MCP_LIST === 'paged') {
+        const from = Number(msg.params?.cursor ?? 0);
+        return ok({ tools: TOOLS.slice(from, from + 2), ...(from + 2 < TOOLS.length ? { nextCursor: String(from + 2) } : {}) });
+      }
       return ok({ tools: TOOLS });
     case 'tools/call': {
       calls += 1;
