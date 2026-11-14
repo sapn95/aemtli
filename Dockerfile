@@ -2,12 +2,12 @@
 # uv and python for uvx), plus the runner and the web UI.
 #
 # Every base is pinned by digest; Dependabot moves digest and tag together.
-FROM docker.io/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS node
-FROM ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
+FROM docker.io/library/node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
 # goose's own image is Debian bookworm, like the node image above, so node's
 # binary runs on it unchanged.
-FROM ghcr.io/aaif-goose/goose:1.54.0@sha256:c8a6b66718fafc405055bb642ab1cccbb9a31ed76d1fbd1e4385d18c43cdb4d0
+FROM ghcr.io/aaif-goose/goose:v1.57.0@sha256:06485bd5275090903b7ef5313059d792dd88759d9c6e3365d300aba37454ca58
 
 USER root
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -17,7 +17,8 @@ RUN set -eu; \
     ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm; \
     ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx; \
     apt-get update; \
-    apt-get install -y --no-install-recommends python3 jq poppler-utils; \
+    # node 26 links libatomic, which goose's slim base does not carry.
+    apt-get install -y --no-install-recommends libatomic1 python3 jq poppler-utils; \
     rm -rf /var/lib/apt/lists/*; \
     # As root with HOME pointing at goose's home, a version check would
     # leave root-owned state there that goose then cannot write to.
