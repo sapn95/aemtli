@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readGooseResult } from './result.mjs';
-import { RECIPE_NAME, newRunId, createRunDir, writeJsonAtomic, pruneRuns } from '../store/runs.mjs';
+import { RECIPE_NAME, newRunId, createRunDir, writeJsonAtomic, pruneRuns, closeStaleRuns } from '../store/runs.mjs';
 
 // goose's JSON on stdout is buffered to parse it at the end; a run that
 // prints more than this is not a run anybody wants a result page for. stderr
@@ -86,6 +86,7 @@ export async function runRecipe({
   if (!RECIPE_NAME.test(recipe)) throw new Error(`not a recipe name: ${recipe}`);
   const recipePath = join(recipesDir, `${recipe}.yaml`);
   if (!existsSync(recipePath)) throw new Error(`no recipe file ${recipePath}`);
+  closeStaleRuns(dataDir, recipe);
 
   const started = now();
   const id = newRunId(started);

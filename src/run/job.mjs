@@ -36,7 +36,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import { prepareZXingModule, purgeZXingModule, readBarcodes } from 'zxing-wasm/reader';
-import { createRunDir, newRunId, pruneRuns, writeJsonAtomic, RECIPE_NAME, ATTACHMENT_NAME, ATTACHMENT_TYPES } from '../store/runs.mjs';
+import { createRunDir, newRunId, pruneRuns, closeStaleRuns, writeJsonAtomic, RECIPE_NAME, ATTACHMENT_NAME, ATTACHMENT_TYPES } from '../store/runs.mjs';
 import { createMcpClient } from './mcp-client.mjs';
 import { jobCards } from './cards.mjs';
 import { parseSwissQr } from './swissqr.mjs';
@@ -140,6 +140,7 @@ export async function runJob({
   if (!RECIPE_NAME.test(name)) throw new Error(`not a job name: ${name}`);
   const file = join(recipesDir, `${name}.mjs`);
   if (!existsSync(file)) throw new Error(`no job file ${file}`);
+  closeStaleRuns(dataDir, name);
 
   const started = now();
   const id = newRunId(started);
@@ -285,6 +286,12 @@ export async function runJob({
         await rm(work, { recursive: true, force: true });
       }
     },
+    /**
+     * Writes ctx.state now, also when the run fails later: what it records
+     * as done is not done again. So save right after the outward step (a
+     * card, a copy, a calendar entry), and only once what is merely to be
+     * reported has been reported.
+     */
     saveState() {
       writeJsonAtomic(statePath, ctx.state);
     },

@@ -109,3 +109,13 @@ test('when goose stops before any JSON, its own error line is the reason', async
   const r = await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: { ...s.env, FAKE_GOOSE_MODE: 'crash' } });
   assert.match(r.error, /something specific broke/);
 });
+
+test('a run whose pod died is closed as failed when the next run starts', async () => {
+  const s = setup('success');
+  const first = await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: s.env });
+  writeFileSync(join(s.dataDir, 'runs', 'hello', first.id, 'run.json'), JSON.stringify({ ...first, status: 'running' }));
+  await runRecipe({ recipe: 'hello', recipesDir: s.recipesDir, dataDir: s.dataDir, goose: FAKE, env: s.env });
+  const dead = listRuns(s.dataDir, 'hello').find(r => r.id === first.id);
+  assert.equal(dead.status, 'failed');
+  assert.match(dead.error, /pod was most likely killed/);
+});
