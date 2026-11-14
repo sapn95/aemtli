@@ -571,16 +571,17 @@ test('a card a job keeps carries the address to look it up, from KANBAN_PUBLIC_U
   }
 });
 
-test('a job that logs too much has its run.log cut at 8 MB, once', async () => {
+test('a job that logs too much has its run.log cut at 8 MB, once, and still says why it failed', async () => {
   const { recipesDir, dataDir } = dirs({ chatty: `export default async function (ctx) {
   const line = 'x'.repeat(1024 * 1024);
   for (let i = 0; i < 10; i++) ctx.log(line);
-  return 'done';
+  throw new Error('too chatty');
 }
 ` });
   const run = await runJob({ name: 'chatty', recipesDir, dataDir, env: {} });
-  assert.equal(run.status, 'succeeded');
+  assert.equal(run.status, 'failed');
   const log = read(dataDir, 'chatty', run.id, 'run.log');
-  assert.ok(log.length <= 8 * 1024 * 1024, `${log.length} bytes`);
+  assert.ok(Buffer.byteLength(log) <= 8 * 1024 * 1024, `${log.length} bytes`);
   assert.equal(log.match(/\[log cut at 8 MB\]/g)?.length, 1);
+  assert.match(log, /failed: Error: too chatty/, 'why it failed is still at the end');
 });

@@ -140,6 +140,10 @@ test('a failed tool list is not kept for the session, and every page counts', as
     // Two tools a page: secret_status is alone on the third.
     assert.match((await rpc('tools/call', { name: 'secret_status', arguments: {} }, sid)).body.result.content[0].text, /Not logged in/);
   }, { env: { FAKE_MCP_LIST: 'paged' }, policy: 'allow: [read_*, secret_status]\n' });
+  await withGateway(async ({ rpc, open }) => {
+    const sid = await open();
+    assert.match((await rpc('tools/call', { name: 'read_thing', arguments: {} }, sid)).body.error.message, /more than 20 pages/);
+  }, { env: { FAKE_MCP_LIST: 'endless' } });
 });
 
 test('a call that needs approval is held, once, and runs only when approved', () =>

@@ -113,6 +113,7 @@ function anthropicFrom(env) {
 
 // A job's run.log stops here, like a recipe's (runner.mjs).
 const MAX_LOG = 8 * 1024 * 1024;
+const LOG_ROOM = 64 * 1024;
 
 // Errors that mean the connection was never made, so a push is safe to try again.
 const CONNECT = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
@@ -147,13 +148,23 @@ export async function runJob({
   writeJsonAtomic(join(dir, 'run.json'), record);
   const logPath = join(dir, 'run.log');
   // Capped like a recipe's run.log: a job that logs per item must not fill
-  // the volume, and the UI only shows the tail anyway.
+  // the volume. The last LOG_ROOM is kept for the line that says why the run
+  // failed, which comes after everything the job logged.
   let logged = 0;
-  const log = line => {
-    if (logged >= MAX_LOG) return;
+  const log = (line, { last = false } = {}) => {
+    const cap = last ? MAX_LOG : MAX_LOG - LOG_ROOM;
+    if (logged >= cap) return;
     const text = `${new Date().toISOString()} ${line}\n`;
-    logged += Buffer.byteLength(text);
-    appendFileSync(logPath, logged >= MAX_LOG ? `[log cut at ${MAX_LOG / 1024 / 1024} MB]\n` : text);
+    if (logged + Buffer.byteLength(text) <= cap) {
+      logged += Buffer.byteLength(text);
+      appendFileSync(logPath, text);
+    } else if (!last) {
+      logged = cap;
+      appendFileSync(logPath, `[log cut at ${MAX_LOG / 1024 / 1024} MB]\n`);
+    } else {
+      appendFileSync(logPath, text.slice(0, cap - logged));
+      logged = cap;
+    }
   };
 
   // Next to the job's runs, on the one volume a run may write.
@@ -395,7 +406,7 @@ export async function runJob({
   } catch (err) {
     status = 'failed';
     error = err.message;
-    log(`failed: ${err.stack ?? err.message}`);
+    log(`failed: ${err.stack ?? err.message}`, { last: true });
   } finally {
     await Promise.allSettled(clients.map(c => c.close()));
   }
