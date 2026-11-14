@@ -3,11 +3,11 @@
 #
 # Every base is pinned by digest; Dependabot moves digest and tag together.
 FROM docker.io/library/node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node
-FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
 
 # goose's own image is Debian bookworm, like the node image above, so node's
 # binary runs on it unchanged.
-FROM ghcr.io/aaif-goose/goose:v1.57.0@sha256:06485bd5275090903b7ef5313059d792dd88759d9c6e3365d300aba37454ca58
+FROM ghcr.io/aaif-goose/goose:v1.59.1@sha256:7a49f1ab4c0f03ae52429e1ed30da5eace76f9e1c1963cc58167cc7c09cda78b
 
 USER root
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
