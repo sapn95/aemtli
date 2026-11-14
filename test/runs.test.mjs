@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { newRunId, runDir, createRunDir, writeJsonAtomic, readRun, readRunFile, listRuns, pruneRuns, RUN_ID } from '../src/store/runs.mjs';
+import { newRunId, runDir, createRunDir, writeJsonAtomic, readRun, readRunFile, listRuns, pruneRuns, closeStaleRuns, STALE_RUN, RUN_ID } from '../src/store/runs.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'aemtli-runs-'));
 
@@ -76,4 +76,17 @@ test('what a run planted cannot make the UI follow a link, block or read gigabyt
   writeJsonAtomic(join(data, 'elsewhere', 'run.json'), { id: d });
   symlinkSync(join(data, 'elsewhere'), runDir(data, 'hello', d));
   assert.equal(readRun(data, 'hello', d), null);
+});
+
+test('a run still "running" when the next one starts is closed as failed, the rest stay', () => {
+  const data = mkdtempSync(join(tmpdir(), 'aemtli-stale-'));
+  const ids = ['20261101T060000Z-aaaa', '20261102T060000Z-bbbb', '20261103T060000Z-cccc'];
+  const statuses = ['succeeded', 'running', 'degraded'];
+  ids.forEach((id, i) => writeJsonAtomic(join(createRunDir(data, 'morning', id), 'run.json'), { recipe: 'morning', id, status: statuses[i], startedAt: '2026-11-01T06:00:00.000Z' }));
+  assert.equal(closeStaleRuns(data, 'morning'), 1);
+  assert.deepEqual(listRuns(data, 'morning').map(r => r.status), ['degraded', 'failed', 'succeeded']);
+  assert.equal(readRun(data, 'morning', ids[1]).error, STALE_RUN);
+  assert.equal(readRun(data, 'morning', ids[1]).startedAt, '2026-11-01T06:00:00.000Z', 'what it had is kept');
+  assert.equal(closeStaleRuns(data, 'morning'), 0, 'and once is enough');
+  assert.equal(closeStaleRuns(data, 'nothing-here'), 0);
 });

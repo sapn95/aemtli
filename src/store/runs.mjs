@@ -143,6 +143,30 @@ export function listRuns(dataDir, recipe, limit = 20) {
     .filter(Boolean);
 }
 
+// What a run that died without a word says on its page.
+export const STALE_RUN = 'it stopped without recording its end: its pod was most likely killed (out of memory, evicted, a node restart)';
+
+/**
+ * Marks the runs of a recipe that still say "running" as failed; returns how
+ * many. A new run calls it as it starts. Runs of one recipe do not overlap
+ * (the CronJobs forbid it, and the UI refuses a second start), so a run that
+ * still says "running" then is one whose pod died before it could write its
+ * end: out of memory, evicted, a node restart. Should one still be alive
+ * after all, its own last write puts its real status back.
+ */
+export function closeStaleRuns(dataDir, recipe) {
+  let closed = 0;
+  for (const id of runIds(dataDir, recipe)) {
+    const run = readRun(dataDir, recipe, id);
+    const dir = run?.status === 'running' && checkedRunDir(dataDir, recipe, id);
+    if (!dir) continue;
+    Object.assign(run, { status: 'failed', error: STALE_RUN });
+    writeJsonAtomic(join(dir, 'run.json'), run);
+    closed += 1;
+  }
+  return closed;
+}
+
 /** Deletes all but the newest `keep` runs of a recipe; returns how many went. */
 export function pruneRuns(dataDir, recipe, keep) {
   // slice(NaN) is everything: a bad count must never delete every run.

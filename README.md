@@ -214,7 +214,8 @@ export default async function (ctx) {
   and `url(id)` builds one, so a report can link the card; both are null
   without `KANBAN_PUBLIC_URL`, never a guessed address.
 - `ctx.state` is kept between runs (`ctx.saveState()`), for "only what is
-  new". `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
+  new". A save stands even if the run fails after it, so save right after
+  each outward step and never before what still has to be reported. `ctx.params`, `ctx.fetch`, `ctx.log` and `ctx.now` do what they say.
 
 The model in a job gets text and gives text back. It has no tools, so what a
 letter or a release note says cannot make it do anything. Use a goose recipe

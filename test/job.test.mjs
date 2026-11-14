@@ -585,3 +585,15 @@ test('a job that logs too much has its run.log cut at 8 MB, once, and still says
   assert.equal(log.match(/\[log cut at 8 MB\]/g)?.length, 1);
   assert.match(log, /failed: Error: too chatty/, 'why it failed is still at the end');
 });
+
+test('a job run whose pod died is closed as failed when the next run starts', async () => {
+  const { recipesDir, dataDir } = dirs({ quiet: 'export default async function () { return \'ok\'; }\n' });
+  const first = await runJob({ name: 'quiet', recipesDir, dataDir, env: {} });
+  // As the pod left it when it was killed mid-run.
+  writeFileSync(join(dataDir, 'runs', 'quiet', first.id, 'run.json'), JSON.stringify({ ...first, status: 'running' }));
+  const second = await runJob({ name: 'quiet', recipesDir, dataDir, env: {} });
+  assert.equal(second.status, 'succeeded');
+  const dead = JSON.parse(read(dataDir, 'quiet', first.id, 'run.json'));
+  assert.equal(dead.status, 'failed');
+  assert.match(dead.error, /pod was most likely killed/);
+});
