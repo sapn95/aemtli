@@ -373,6 +373,46 @@ test('the tools: names, which only read, and that each calls its method', async 
   assert.deepEqual(seen.map(([m]) => m), ['health', 'logs', 'events', 'restart', 'rerun', 'refresh', 'resync']);
 });
 
+test('a read that meets an API server still warming up is asked again; a write and other errors are not', async () => {
+  const seen = [];
+  let busy = 2;
+  const server = createServer((req, res) => {
+    seen.push(`${req.method} ${req.url}`);
+    if (req.url === '/always') return res.writeHead(429, { 'content-type': 'application/json' }).end(JSON.stringify({ message: 'storage is (re)initializing' }));
+    res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ message: 'forbidden' }));
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  try {
+    const api = createKubeApi({ baseUrl: `http://127.0.0.1:${server.address().port}`, token: 't', retryDelayMs: 1 });
+    // Two refusals and then the third answer: three asks in all.
+    const ok = createServer((req, res) => {
+      seen.push(req.method);
+      if (busy-- > 0) return res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0' }).end('{"message":"storage is (re)initializing"}');
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"items":[]}');
+    });
+    await new Promise(r => ok.listen(0, '127.0.0.1', r));
+    try {
+      const warm = createKubeApi({ baseUrl: `http://127.0.0.1:${ok.address().port}`, token: 't', retryDelayMs: 1 });
+      assert.deepEqual(await warm('GET', '/apis/longhorn.io/v1beta2/namespaces/longhorn-system/backups'), { items: [] });
+      assert.deepEqual(seen, ['GET', 'GET', 'GET']);
+      seen.length = 0;
+      busy = 1;
+      await assert.rejects(() => warm('PATCH', '/x', {}), /PATCH \/x: 429/, 'a write is not repeated');
+      assert.deepEqual(seen, ['PATCH']);
+    } finally {
+      ok.close();
+    }
+    seen.length = 0;
+    await assert.rejects(() => api('GET', '/always'), /GET \/always: 429 storage is \(re\)initializing/, 'it gives up after three more tries');
+    assert.equal(seen.length, 4);
+    seen.length = 0;
+    await assert.rejects(() => api('GET', '/denied'), /403 forbidden/);
+    assert.equal(seen.length, 1, 'a refusal is not a reason to ask again');
+  } finally {
+    server.close();
+  }
+});
+
 test('the API client sends the token and the patch type, and says what the API refused', async () => {
   const seen = [];
   const server = createServer((req, res) => {
