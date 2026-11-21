@@ -37,6 +37,9 @@ const STUCK = new Set(['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', '
 // Longhorn's recurring backup runs nightly; a day and a half without one means
 // at least one night was missed.
 const BACKUP_MAX_AGE_MS = 36 * 60 * 60_000;
+// A node that reboots leaves its volumes degraded until Longhorn has rebuilt
+// the replica, which takes minutes. Degraded for longer than this is stuck.
+const DEGRADED_GRACE_MS = 30 * 60_000;
 // etcd with three members survives one loss. Fewer ready members means the
 // next failure stops the cluster.
 const ETCD_MEMBERS = 3;
@@ -243,7 +246,9 @@ export function findProblems({ apps = [], deployments = [], replicaSets = [], po
     const label = pvc?.pvcName ? `${pvc.namespace}/${pvc.pvcName}` : id;
     const state = vol.status?.state;
     const robustness = vol.status?.robustness;
-    if (state === 'faulted' || (state === 'attached' && robustness !== 'healthy')) {
+    const degradedSince = Date.parse(vol.status?.lastDegradedAt ?? '');
+    const rebuilding = robustness === 'degraded' && now - degradedSince <= DEGRADED_GRACE_MS;
+    if (state === 'faulted' || (state === 'attached' && robustness !== 'healthy' && !rebuilding)) {
       add({ key: `longhorn/volume/${id}`, kind: 'Volume', namespace: vol.metadata.namespace, name: id, summary: `Longhorn volume ${label}: ${state === 'faulted' ? 'faulted' : robustness ?? 'unknown'}` });
     }
     if (state !== 'attached') continue;
@@ -325,14 +330,14 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
 
   // A leading ? marks an address that may not answer at all.
   async function probe(entry) {
-    const optional = entry.startsWith('?');
-    const url = optional ? entry.slice(1) : entry;
+    const silent = entry.startsWith('?');
+    const url = silent ? entry.slice(1) : entry;
     try {
       const res = await fetchImpl(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10_000) });
       // A redirect to a sign-in is the tunnel answering; 5xx is it, or the app, not.
-      return { url, optional, status: res.status, ok: res.status < 500 };
+      return { url, optional: silent, status: res.status, ok: res.status < 500 };
     } catch (err) {
-      return { url, optional, ok: false, error: err.cause?.code ?? err.message };
+      return { url, optional: silent, ok: false, error: err.cause?.code ?? err.message };
     }
   }
 

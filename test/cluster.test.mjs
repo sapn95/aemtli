@@ -107,9 +107,9 @@ test('a CronJob that never succeeded is judged from its birth, and one failed ru
 });
 
 const LH = 'longhorn-system';
-const volume = (name, state, robustness, { pvc, created = ago(60 * 24 * 30) } = {}) => ({
+const volume = (name, state, robustness, { pvc, created = ago(60 * 24 * 30), degraded } = {}) => ({
   ...meta(name, LH, { creationTimestamp: created }),
-  status: { state, robustness, ...(pvc ? { kubernetesStatus: { namespace: pvc[0], pvcName: pvc[1] } } : {}) },
+  status: { state, robustness, ...(degraded !== undefined ? { lastDegradedAt: degraded } : {}), ...(pvc ? { kubernetesStatus: { namespace: pvc[0], pvcName: pvc[1] } } : {}) },
 });
 const backup = (name, vol, state, hoursAgo, field = 'backupCreatedAt') => ({
   ...meta(name, LH, { labels: { 'backup-volume': vol } }),
@@ -124,15 +124,21 @@ test('Longhorn: a degraded or faulted volume, and one without a completed backup
   const problems = findProblems({
     volumes: [
       volume('pvc-fine', 'attached', 'healthy', { pvc: ['budget', 'budget-data'] }),
-      volume('pvc-degraded', 'attached', 'degraded', { pvc: ['kanban', 'kanban-postgres'] }),
+      volume('pvc-degraded', 'attached', 'degraded', { pvc: ['kanban', 'kanban-postgres'], degraded: ago(45) }),
+      // A rebuild after a reboot passes by itself.
+      volume('pvc-rebuilding', 'attached', 'degraded', { degraded: ago(10) }),
+      volume('pvc-unknown', 'attached', 'unknown', { degraded: '' }),
       volume('pvc-faulted', 'faulted', 'unknown'),
       volume('pvc-detached', 'detached', 'unknown'),
       volume('pvc-stale', 'attached', 'healthy', { pvc: ['apps', 'web-data'] }),
       volume('pvc-snapshot', 'attached', 'healthy'),
       volume('pvc-never', 'attached', 'healthy'),
       volume('pvc-new', 'attached', 'healthy', { created: ago(60 * 5) }),
+      volume('pvc-label', 'attached', 'healthy'),
     ],
     backups: [
+      backup('b0', 'pvc-rebuilding', 'Completed', 10),
+      backup('b0u', 'pvc-unknown', 'Completed', 10),
       backup('b1', 'pvc-fine', 'Completed', 10),
       backup('b2', 'pvc-fine', 'Completed', 34),
       backup('b3', 'pvc-degraded', 'Completed', 10),
@@ -141,10 +147,14 @@ test('Longhorn: a degraded or faulted volume, and one without a completed backup
       backup('b5', 'pvc-stale', 'Error', 2),
       backup('b6', 'pvc-snapshot', 'Completed', 12, 'snapshotCreatedAt'),
       backup('b7', 'pvc-detached', 'Completed', 24 * 20),
+      // Named by its label only, and one with a time that does not parse.
+      { ...meta('b8', LH, { labels: { 'backup-volume': 'pvc-label' } }), status: { state: 'Completed', backupCreatedAt: ago(60) } },
+      { ...meta('b9', LH), status: { state: 'Completed', volumeName: 'pvc-label', backupCreatedAt: 'not a time' } },
     ],
   }, NOW);
   assert.deepEqual(problems.map(p => p.key), [
     'longhorn/volume/pvc-degraded',
+    'longhorn/volume/pvc-unknown',
     'longhorn/volume/pvc-faulted',
     'longhorn/backup/pvc-stale',
     'longhorn/backup/pvc-never',
