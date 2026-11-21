@@ -62,11 +62,29 @@ export function createKubeApi({
   baseUrl = `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`,
   token,
   ca,
+  retries = 3,
+  retryDelayMs = 1_000,
 } = {}) {
   const url = new URL(baseUrl);
   const tls = url.protocol === 'https:';
   const caCert = tls ? (ca ?? readFileSync(`${SA}/ca.crt`)) : undefined;
-  return (method, path, body, contentType = 'application/json') => {
+  // An API server that has just restarted answers a list with 429 "storage is
+  // (re)initializing" until its cache is warm, a few seconds. A read is asked
+  // again after Retry-After (at most five seconds), so a restart of one
+  // server does not fail a whole watch run. Writes are not repeated.
+  return async (method, path, body, contentType) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await call(method, path, body, contentType);
+      } catch (err) {
+        if (method !== 'GET' || err.status !== 429 || attempt >= retries) throw err;
+        const wait = Math.min(5_000, (Number(err.retryAfter) || 0) * 1_000 || retryDelayMs);
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+  };
+
+  function call(method, path, body, contentType = 'application/json') {
     // Read on every call: projected service account tokens are rotated.
     const bearer = token ?? readFileSync(`${SA}/token`, 'utf8').trim();
     const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -87,7 +105,7 @@ export function createKubeApi({
           let parsed = data;
           try { parsed = data ? JSON.parse(data) : {}; } catch { /* a log is text */ }
           if (res.statusCode >= 200 && res.statusCode < 300) resolve(parsed);
-          else reject(new Error(`${method} ${path.split('?')[0]}: ${res.statusCode} ${parsed?.message ?? String(data).slice(0, 200)}`));
+          else reject(Object.assign(new Error(`${method} ${path.split('?')[0]}: ${res.statusCode} ${parsed?.message ?? String(data).slice(0, 200)}`), { status: res.statusCode, retryAfter: res.headers['retry-after'] }));
         });
       });
       req.on('timeout', () => req.destroy(new Error(`${method} ${path.split('?')[0]}: timed out`)));
@@ -95,7 +113,7 @@ export function createKubeApi({
       if (payload) req.write(payload);
       req.end();
     });
-  };
+  }
 }
 
 /** The condition of `type` on an object, or undefined. */
