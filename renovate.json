@@ -2,7 +2,8 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Takes over from Dependabot with the same behaviour: one grouped pull request per manager per week, and every update merges itself once all checks are green, majors included. A pull request labelled no-automerge is held. See https://github.com/sapn95/.github/blob/main/CI.md.",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":disableDependencyDashboard"
   ],
   "enabledManagers": [
     "github-actions",
@@ -24,7 +25,6 @@
   "platformAutomerge": false,
   "automergeStrategy": "squash",
   "stopUpdatingLabel": "no-automerge",
-  "dependencyDashboard": false,
   "packageRules": [
     {
       "description": "The workflows' actions, in one pull request.",
