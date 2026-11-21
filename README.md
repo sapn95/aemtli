@@ -492,15 +492,23 @@ lasts:
   ten minutes, one problem per Deployment, StatefulSet or DaemonSet;
 - a CronJob whose last run failed, or that missed two runs in a row;
 - a node that is not ready or under disk, memory or PID pressure;
+- fewer than three ready nodes with the role `node-role.kubernetes.io/etcd`,
+  if any node has it (a cluster on SQLite has none and is not judged);
 - an ExternalSecret that is not ready;
-- a public address in `CLUSTER_PROBES` that does not answer, or answers
-  with a 5xx (a redirect to a sign-in counts as an answer).
+- a Longhorn volume that is faulted, or attached and not healthy;
+- an attached Longhorn volume whose newest completed backup is older than
+  36 hours (a volume younger than that is given its first night);
+- an address in `CLUSTER_PROBES` that does not answer, or answers with a
+  5xx (a redirect to a sign-in counts as an answer). An address written with
+  a leading `?` may stay silent, for a machine that is sometimes booted into
+  another system; if it answers with a 5xx, that is still a problem.
 
 Where a handgrip may help, the problem names it, and a tool does it:
 `cluster_restart` restarts a Deployment whose pods crash, `cluster_rerun`
 starts a failed CronJob's Job again, `cluster_refresh` asks Argo CD to
 compare an application with git again, and `cluster_resync` asks ESO to
-fetch an ExternalSecret again. `cluster_logs` and `cluster_events` show why.
+fetch an ExternalSecret again. etcd and Longhorn problems have no handgrip:
+they need a person. `cluster_logs` and `cluster_events` show why.
 
 What may be read and touched is narrowed by namespace allow lists, and a list
 left out allows nothing: logs and events only where `CLUSTER_LOG_NAMESPACES`
@@ -567,7 +575,8 @@ another address of the same API (`https://transport.opendata.ch/v1`).
 pods, workloads, Jobs, CronJobs, nodes, Argo CD applications and
 ExternalSecrets; logs and events, patching Deployments and ExternalSecrets,
 and creating Jobs only in the namespaces of the lists below; patching
-Applications in Argo CD's namespace), `CLUSTER_PROBES` (public addresses to
+Applications in Argo CD's namespace; reading Longhorn volumes and backups in
+`longhorn-system`, if Longhorn is installed), `CLUSTER_PROBES` (public addresses to
 look at), and `CLUSTER_LOG_NAMESPACES`, `CLUSTER_HEAL_NAMESPACES` and
 `CLUSTER_RERUN_NAMESPACES`. All are comma-separated.
 

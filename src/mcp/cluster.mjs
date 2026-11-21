@@ -4,8 +4,9 @@
 // overlay grants the reads and exactly the writes below.
 //
 // What is broken comes from the API alone: Argo CD applications, workloads,
-// pods, CronJobs and their Jobs, nodes and ExternalSecrets, plus a GET on the
-// public addresses named in CLUSTER_PROBES. Each problem has a key that stays
+// pods, CronJobs and their Jobs, nodes and the etcd quorum, ExternalSecrets,
+// Longhorn volumes and their backups, plus a GET on the public addresses named
+// in CLUSTER_PROBES. Each problem has a key that stays
 // the same while it lasts, so the watch job can tell a new one from an old
 // one, and the handgrip that may help, if there is one:
 //
@@ -33,6 +34,13 @@ const NAME = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
 const PENDING_MS = 10 * 60_000;
 // Waiting reasons that do not pass by themselves.
 const STUCK = new Set(['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'CreateContainerConfigError', 'InvalidImageName']);
+// Longhorn's recurring backup runs nightly; a day and a half without one means
+// at least one night was missed.
+const BACKUP_MAX_AGE_MS = 36 * 60 * 60_000;
+// etcd with three members survives one loss. Fewer ready members means the
+// next failure stops the cluster.
+const ETCD_MEMBERS = 3;
+const ETCD_LABEL = 'node-role.kubernetes.io/etcd';
 
 const bad = message => Object.assign(new Error(message), { status: 400 });
 
@@ -113,7 +121,7 @@ function ownerOf(pod, replicaSets) {
  * The problems in a snapshot of the cluster. Pure, so it is tested on its
  * own: `now` is a Date, the rest are the API's lists.
  */
-export function findProblems({ apps = [], deployments = [], replicaSets = [], pods = [], cronJobs = [], jobs = [], nodes = [], externalSecrets = [], probes = [] }, now) {
+export function findProblems({ apps = [], deployments = [], replicaSets = [], pods = [], cronJobs = [], jobs = [], nodes = [], externalSecrets = [], volumes = [], backups = [], probes = [] }, now) {
   const problems = [];
   const add = p => problems.push(p);
 
@@ -207,6 +215,49 @@ export function findProblems({ apps = [], deployments = [], replicaSets = [], po
     }
   }
 
+  // A cluster on SQLite has no etcd role on any node and is not judged; one
+  // that has the role on any node is held to three ready members.
+  const etcd = nodes.filter(n => n.metadata.labels?.[ETCD_LABEL] === 'true');
+  const etcdReady = etcd.filter(n => condition(n, 'Ready')?.status === 'True');
+  if (etcd.length && etcdReady.length < ETCD_MEMBERS) {
+    const down = etcd.filter(n => !etcdReady.includes(n)).map(n => n.metadata.name);
+    add({
+      key: 'etcd/quorum', kind: 'Node', name: 'etcd',
+      summary: `etcd: ${etcdReady.length} of ${ETCD_MEMBERS} members ready${down.length ? ` (not ready: ${down.join(', ')})` : ''}`,
+    });
+  }
+
+  // Longhorn volumes. A detached volume reports no robustness and writes
+  // nothing that a backup would miss, so only attached ones are judged on
+  // both counts; a faulted one always is.
+  const newestBackup = new Map();
+  for (const b of backups) {
+    if (b.status?.state !== 'Completed') continue;
+    const volume = b.status?.volumeName ?? b.metadata.labels?.['backup-volume'];
+    const at = Date.parse(b.status?.backupCreatedAt ?? b.status?.snapshotCreatedAt ?? '');
+    if (volume && Number.isFinite(at) && at > (newestBackup.get(volume) ?? -Infinity)) newestBackup.set(volume, at);
+  }
+  for (const vol of volumes) {
+    const id = vol.metadata.name;
+    const pvc = vol.status?.kubernetesStatus;
+    const label = pvc?.pvcName ? `${pvc.namespace}/${pvc.pvcName}` : id;
+    const state = vol.status?.state;
+    const robustness = vol.status?.robustness;
+    if (state === 'faulted' || (state === 'attached' && robustness !== 'healthy')) {
+      add({ key: `longhorn/volume/${id}`, kind: 'Volume', namespace: vol.metadata.namespace, name: id, summary: `Longhorn volume ${label}: ${state === 'faulted' ? 'faulted' : robustness ?? 'unknown'}` });
+    }
+    if (state !== 'attached') continue;
+    const last = newestBackup.get(id);
+    // A volume younger than the limit may not have had its first night yet.
+    const since = last ?? Date.parse(vol.metadata.creationTimestamp);
+    if (now - since > BACKUP_MAX_AGE_MS) {
+      add({
+        key: `longhorn/backup/${id}`, kind: 'Volume', namespace: vol.metadata.namespace, name: id,
+        summary: `Longhorn volume ${label}: ${last ? `newest backup from ${new Date(last).toISOString().slice(0, 16)}Z` : 'no completed backup'}`,
+      });
+    }
+  }
+
   for (const es of externalSecrets) {
     const ready = condition(es, 'Ready');
     if (ready && ready.status !== 'True') {
@@ -219,7 +270,9 @@ export function findProblems({ apps = [], deployments = [], replicaSets = [], po
   }
 
   for (const probe of probes) {
-    if (!probe.ok) add({ key: `probe/${probe.url}`, kind: 'Probe', name: probe.url, summary: `${probe.url}: ${probe.error ?? `answered ${probe.status}`}` });
+    // An optional address may be away on purpose (a machine booted into
+    // another system): no answer is no problem, a 5xx still is.
+    if (!probe.ok && !(probe.optional && probe.error)) add({ key: `probe/${probe.url}`, kind: 'Probe', name: probe.url, summary: `${probe.url}: ${probe.error ?? `answered ${probe.status}`}` });
   }
   return problems;
 }
@@ -259,7 +312,7 @@ export function namespaces(setting) {
  * The cluster client: `api` is createKubeApi's function, `fetchImpl` and
  * `probes` the public addresses to look at, `now` the clock.
  */
-export function createCluster({ api, probes = [], fetchImpl = fetch, now = () => new Date(), logNamespaces = new Set(), healNamespaces = new Set(), rerunNamespaces = new Set() }) {
+export function createCluster({ api, probes = [], fetchImpl = fetch, now = () => new Date(), logNamespaces = new Set(), healNamespaces = new Set(), rerunNamespaces = new Set(), longhornNamespace = 'longhorn-system' }) {
   /** The namespace, if `allowed` names it; an error that says which list it is missing from otherwise. */
   const within = (allowed, namespace, what) => {
     name(namespace, 'namespace');
@@ -270,13 +323,16 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
   // A kind that is not installed (no Argo CD, no ESO) is no error: it has none.
   const optional = path => list(path).catch(err => (/: 404 /.test(err.message) ? [] : Promise.reject(err)));
 
-  async function probe(url) {
+  // A leading ? marks an address that may not answer at all.
+  async function probe(entry) {
+    const optional = entry.startsWith('?');
+    const url = optional ? entry.slice(1) : entry;
     try {
       const res = await fetchImpl(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10_000) });
       // A redirect to a sign-in is the tunnel answering; 5xx is it, or the app, not.
-      return { url, status: res.status, ok: res.status < 500 };
+      return { url, optional, status: res.status, ok: res.status < 500 };
     } catch (err) {
-      return { url, ok: false, error: err.cause?.code ?? err.message };
+      return { url, optional, ok: false, error: err.cause?.code ?? err.message };
     }
   }
 
@@ -302,7 +358,10 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
   return {
     /** Everything that is wrong now, each with its key and the handgrip that may help. */
     async health() {
-      const [apps, deployments, replicaSets, pods, cronJobs, jobs, nodes, externalSecrets, looked] = await Promise.all([
+      // Longhorn is read in its own namespace only: that is all the role
+      // grants, and where Longhorn keeps its objects.
+      const longhorn = `/apis/longhorn.io/v1beta2/namespaces/${name(longhornNamespace, 'namespace')}`;
+      const [apps, deployments, replicaSets, pods, cronJobs, jobs, nodes, externalSecrets, volumes, backups, looked] = await Promise.all([
         optional('/apis/argoproj.io/v1alpha1/applications'),
         list('/apis/apps/v1/deployments'),
         list('/apis/apps/v1/replicasets'),
@@ -311,12 +370,14 @@ export function createCluster({ api, probes = [], fetchImpl = fetch, now = () =>
         list('/apis/batch/v1/jobs'),
         list('/api/v1/nodes'),
         optional('/apis/external-secrets.io/v1/externalsecrets'),
+        optional(`${longhorn}/volumes`),
+        optional(`${longhorn}/backups`),
         Promise.all(probes.map(probe)),
       ]);
-      const problems = findProblems({ apps, deployments, replicaSets, pods, cronJobs, jobs, nodes, externalSecrets, probes: looked }, now().getTime());
+      const problems = findProblems({ apps, deployments, replicaSets, pods, cronJobs, jobs, nodes, externalSecrets, volumes, backups, probes: looked }, now().getTime());
       return {
         problems,
-        looked: { apps: apps.length, deployments: deployments.length, pods: pods.length, cronJobs: cronJobs.length, nodes: nodes.length, externalSecrets: externalSecrets.length, probes: looked.length },
+        looked: { apps: apps.length, deployments: deployments.length, pods: pods.length, cronJobs: cronJobs.length, nodes: nodes.length, externalSecrets: externalSecrets.length, volumes: volumes.length, backups: backups.length, probes: looked.length },
       };
     },
 
@@ -393,7 +454,7 @@ export function clusterTools(cluster) {
   const read = { readOnlyHint: true };
   const heal = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
   return [
-    { name: 'cluster_health', description: 'What is wrong in the cluster now: Argo CD apps degraded or out of sync, pods that crash or cannot start, CronJobs whose last run failed or that missed their runs, nodes under pressure, ExternalSecrets not ready, public addresses that do not answer. Each problem has a stable key and, where one may help, a remedy (restart, rerun, refresh, resync).', inputSchema: obj({}), annotations: read, run: () => cluster.health() },
+    { name: 'cluster_health', description: 'What is wrong in the cluster now: Argo CD apps degraded or out of sync, pods that crash or cannot start, CronJobs whose last run failed or that missed their runs, nodes under pressure or fewer than three etcd members ready, ExternalSecrets not ready, Longhorn volumes degraded or faulted or without a backup in 36 hours, addresses in CLUSTER_PROBES that do not answer (one marked optional with a leading ? may stay silent, but not answer with a 5xx). Each problem has a stable key and, where one may help, a remedy (restart, rerun, refresh, resync).', inputSchema: obj({}), annotations: read, run: () => cluster.health() },
     { name: 'cluster_logs', description: 'The last lines of a pod\'s log, or of the newest pod of a Job or Deployment. previous: the container before its last restart. Tokens and passwords are blanked.', inputSchema: obj({ namespace: NS, pod: { type: 'string' }, job: { type: 'string' }, deployment: { type: 'string' }, container: { type: 'string' }, previous: { type: 'boolean' }, lines: { type: 'integer', minimum: 1, maximum: 500 } }, ['namespace']), annotations: read, run: a => cluster.logs(a) },
     { name: 'cluster_events', description: 'The warnings Kubernetes noted in a namespace, newest first, optionally for one object by name.', inputSchema: obj({ namespace: NS, name: { type: 'string' } }, ['namespace']), annotations: read, run: a => cluster.events(a) },
     { name: 'cluster_restart', description: 'Restarts a Deployment\'s pods one by one (kubectl rollout restart).', inputSchema: obj({ namespace: NS, deployment: { type: 'string' } }, ['namespace', 'deployment']), annotations: heal, run: a => cluster.restart(a) },

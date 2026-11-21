@@ -106,6 +106,88 @@ test('a CronJob that never succeeded is judged from its birth, and one failed ru
   assert.equal(q.summary, 'CronJob x/once: the last run failed');
 });
 
+const LH = 'longhorn-system';
+const volume = (name, state, robustness, { pvc, created = ago(60 * 24 * 30) } = {}) => ({
+  ...meta(name, LH, { creationTimestamp: created }),
+  status: { state, robustness, ...(pvc ? { kubernetesStatus: { namespace: pvc[0], pvcName: pvc[1] } } : {}) },
+});
+const backup = (name, vol, state, hoursAgo, field = 'backupCreatedAt') => ({
+  ...meta(name, LH, { labels: { 'backup-volume': vol } }),
+  status: { state, volumeName: vol, [field]: ago(hoursAgo * 60) },
+});
+const etcdNode = (name, ready) => ({
+  ...meta(name, undefined, { labels: { 'node-role.kubernetes.io/etcd': 'true' } }),
+  status: { conditions: [cond('Ready', ready ? 'True' : 'False')] },
+});
+
+test('Longhorn: a degraded or faulted volume, and one without a completed backup in 36 hours', () => {
+  const problems = findProblems({
+    volumes: [
+      volume('pvc-fine', 'attached', 'healthy', { pvc: ['budget', 'budget-data'] }),
+      volume('pvc-degraded', 'attached', 'degraded', { pvc: ['kanban', 'kanban-postgres'] }),
+      volume('pvc-faulted', 'faulted', 'unknown'),
+      volume('pvc-detached', 'detached', 'unknown'),
+      volume('pvc-stale', 'attached', 'healthy', { pvc: ['apps', 'web-data'] }),
+      volume('pvc-snapshot', 'attached', 'healthy'),
+      volume('pvc-never', 'attached', 'healthy'),
+      volume('pvc-new', 'attached', 'healthy', { created: ago(60 * 5) }),
+    ],
+    backups: [
+      backup('b1', 'pvc-fine', 'Completed', 10),
+      backup('b2', 'pvc-fine', 'Completed', 34),
+      backup('b3', 'pvc-degraded', 'Completed', 10),
+      backup('b4', 'pvc-stale', 'Completed', 40),
+      // A newer backup that failed does not count.
+      backup('b5', 'pvc-stale', 'Error', 2),
+      backup('b6', 'pvc-snapshot', 'Completed', 12, 'snapshotCreatedAt'),
+      backup('b7', 'pvc-detached', 'Completed', 24 * 20),
+    ],
+  }, NOW);
+  assert.deepEqual(problems.map(p => p.key), [
+    'longhorn/volume/pvc-degraded',
+    'longhorn/volume/pvc-faulted',
+    'longhorn/backup/pvc-stale',
+    'longhorn/backup/pvc-never',
+  ]);
+  const by = Object.fromEntries(problems.map(p => [p.key, p]));
+  assert.equal(by['longhorn/volume/pvc-degraded'].summary, 'Longhorn volume kanban/kanban-postgres: degraded');
+  assert.equal(by['longhorn/volume/pvc-faulted'].summary, 'Longhorn volume pvc-faulted: faulted');
+  assert.equal(by['longhorn/backup/pvc-stale'].summary, 'Longhorn volume apps/web-data: newest backup from 2026-10-16T20:00Z');
+  assert.equal(by['longhorn/backup/pvc-never'].summary, 'Longhorn volume pvc-never: no completed backup');
+  for (const p of problems) assert.equal(p.remedy, undefined, `${p.key} needs a human`);
+});
+
+test('etcd: fewer than three ready members is a problem; a cluster without the role is not judged', () => {
+  const found = findProblems({ nodes: [etcdNode('a', true), etcdNode('b', true), etcdNode('c', false), meta('worker', undefined)] }, NOW);
+  assert.deepEqual(found.map(r => r.key), ['node/c/Ready', 'node/worker/Ready', 'etcd/quorum']);
+  const p = found.at(-1);
+  assert.equal(p.summary, 'etcd: 2 of 3 members ready (not ready: c)');
+  assert.equal(p.remedy, undefined);
+  const [q] = findProblems({ nodes: [etcdNode('a', true), etcdNode('b', true)] }, NOW);
+  assert.equal(q.summary, 'etcd: 2 of 3 members ready', 'a member that left the cluster counts as missing');
+  assert.deepEqual(findProblems({ nodes: ['a', 'b', 'c'].map(n => etcdNode(n, true)) }, NOW), []);
+  const plain = { ...meta('pi', undefined), status: { conditions: [cond('Ready', 'True')] } };
+  assert.deepEqual(findProblems({ nodes: [plain] }, NOW), [], 'one node on SQLite has no etcd to judge');
+});
+
+test('health reads Longhorn in its own namespace only', async () => {
+  const { api, asked } = fakeApi({
+    'GET /apis/apps/v1/deployments': { items: [] },
+    'GET /apis/apps/v1/replicasets': { items: [] },
+    'GET /api/v1/pods': { items: [] },
+    'GET /apis/batch/v1/cronjobs': { items: [] },
+    'GET /apis/batch/v1/jobs': { items: [] },
+    'GET /api/v1/nodes': { items: [] },
+    [`GET /apis/longhorn.io/v1beta2/namespaces/${LH}/volumes`]: { items: [volume('pvc-x', 'attached', 'degraded')] },
+    [`GET /apis/longhorn.io/v1beta2/namespaces/${LH}/backups`]: { items: [backup('b', 'pvc-x', 'Completed', 1)] },
+  });
+  const { problems, looked } = await createCluster({ api, now: () => new Date(NOW) }).health();
+  assert.deepEqual(problems.map(p => p.key), ['longhorn/volume/pvc-x']);
+  assert.deepEqual([looked.volumes, looked.backups], [1, 1]);
+  assert.ok(!asked.some(a => /\/apis\/longhorn\.io\/v1beta2\/(volumes|backups)/.test(a.path)), 'never cluster-wide');
+  await assert.rejects(() => createCluster({ api, longhornNamespace: '../x' }).health(), /namespace is not a Kubernetes name/);
+});
+
 test('a log loses what looks like a credential, in the forms logs write them', () => {
   // Built at run time, so the repository's own secret scans do not take
   // these made-up tokens for real ones.
@@ -181,10 +263,14 @@ test('health reads every list, takes a missing kind as none, and looks at the pu
     if (url.includes('down')) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
     return { status: url.includes('bad') ? 502 : 200 };
   };
-  const cluster = createCluster({ api, probes: ['https://up.example/healthz', 'https://bad.example', 'https://down.example'], fetchImpl, now: () => new Date(NOW) });
+  const probes = ['https://up.example/healthz', 'https://bad.example', 'https://down.example', '?http://down.example:11434/away', '?http://bad.example:11434/broken'];
+  const cluster = createCluster({ api, probes, fetchImpl, now: () => new Date(NOW) });
   const { problems, looked } = await cluster.health();
-  assert.deepEqual(looked, { apps: 0, deployments: 0, pods: 0, cronJobs: 0, nodes: 1, externalSecrets: 0, probes: 3 });
-  assert.deepEqual(problems.map(p => p.summary), ['Node pi is not ready', 'https://bad.example: answered 502', 'https://down.example: ECONNREFUSED']);
+  assert.deepEqual(looked, { apps: 0, deployments: 0, pods: 0, cronJobs: 0, nodes: 1, externalSecrets: 0, volumes: 0, backups: 0, probes: 5 });
+  // The optional address that does not answer is quiet; the one that answers
+  // with a 5xx is a problem under its URL without the ?.
+  assert.deepEqual(problems.map(p => p.summary), ['Node pi is not ready', 'https://bad.example: answered 502', 'https://down.example: ECONNREFUSED', 'http://bad.example:11434/broken: answered 502']);
+  assert.equal(problems.at(-1).key, 'probe/http://bad.example:11434/broken');
 
   const broken = createCluster({ api: async () => { throw new Error('GET /api/v1/pods: 403 forbidden'); }, now: () => new Date(NOW) });
   await assert.rejects(() => broken.health(), /403 forbidden/, 'a refusal is not taken for an empty cluster');

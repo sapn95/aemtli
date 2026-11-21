@@ -392,7 +392,8 @@ async function mcpTransport() {
 /**
  * `aemtli mcp-cluster`: what is wrong in the cluster and the handgrips that
  * put most of it right, as MCP tools on stdio, with the pod's own service
- * account. CLUSTER_PROBES lists public addresses to look at; the three
+ * account. CLUSTER_PROBES lists addresses to look at (a leading ? marks one
+ * that may stay silent without it being a problem); the three
  * CLUSTER_*_NAMESPACES settings say where logs may be read, Deployments
  * restarted and ExternalSecrets resynced, and CronJobs run again. All are
  * comma-separated; a list left out allows nothing.
