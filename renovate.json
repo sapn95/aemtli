@@ -16,6 +16,7 @@
   ],
   "minimumReleaseAge": "3 days",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "prHourlyLimit": 0,
   "separateMajorMinor": false,
   "automerge": true,
   "automergeType": "pr",
