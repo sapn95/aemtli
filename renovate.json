@@ -17,12 +17,14 @@
     "* 1-5 * * *"
   ],
   "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
   "separateMajorMinor": false,
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": false,
   "automergeStrategy": "squash",
   "stopUpdatingLabel": "no-automerge",
+  "dependencyDashboard": false,
   "packageRules": [
     {
       "description": "The workflows' actions, in one pull request.",
