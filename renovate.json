@@ -1,0 +1,72 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Takes over from Dependabot with the same behaviour: one grouped pull request per manager per week, and every update merges itself once all checks are green, majors included. A pull request labelled no-automerge is held. See https://github.com/sapn95/.github/blob/main/CI.md.",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "npm",
+    "dockerfile"
+  ],
+  "timezone": "Europe/Zurich",
+  "schedule": [
+    "* 1-5 * * 1"
+  ],
+  "automergeSchedule": [
+    "* 1-5 * * *"
+  ],
+  "minimumReleaseAge": "3 days",
+  "separateMajorMinor": false,
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": false,
+  "automergeStrategy": "squash",
+  "stopUpdatingLabel": "no-automerge",
+  "packageRules": [
+    {
+      "description": "The workflows' actions, in one pull request.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "actions"
+    },
+    {
+      "description": "npm, in one pull request. The ranges in package.json move with each update, as Dependabot's did.",
+      "matchManagers": [
+        "npm"
+      ],
+      "groupName": "npm",
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "engines.node says which Node the code supports, not which one is newest.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "engines"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "The Dockerfile's base images, in one pull request.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "groupName": "docker"
+    },
+    {
+      "description": "Odd Node majors never become LTS and are end of life within months of release; the image stays on the even, LTS line.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "node",
+        "docker.io/library/node",
+        "library/node"
+      ],
+      "allowedVersions": "!/^\\d*[13579](\\.|-|$)/"
+    }
+  ]
+}
