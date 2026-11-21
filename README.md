@@ -495,7 +495,8 @@ lasts:
 - fewer than three ready nodes with the role `node-role.kubernetes.io/etcd`,
   if any node has it (a cluster on SQLite has none and is not judged);
 - an ExternalSecret that is not ready;
-- a Longhorn volume that is faulted, or attached and not healthy;
+- a Longhorn volume that is faulted, or attached and not healthy (degraded
+  counts after 30 minutes, the time a rebuild after a reboot may take);
 - an attached Longhorn volume whose newest completed backup is older than
   36 hours (a volume younger than that is given its first night);
 - an address in `CLUSTER_PROBES` that does not answer, or answers with a
@@ -576,8 +577,9 @@ pods, workloads, Jobs, CronJobs, nodes, Argo CD applications and
 ExternalSecrets; logs and events, patching Deployments and ExternalSecrets,
 and creating Jobs only in the namespaces of the lists below; patching
 Applications in Argo CD's namespace; reading Longhorn volumes and backups in
-`longhorn-system`, if Longhorn is installed), `CLUSTER_PROBES` (public addresses to
-look at), and `CLUSTER_LOG_NAMESPACES`, `CLUSTER_HEAL_NAMESPACES` and
+`longhorn-system`, if Longhorn is installed), `CLUSTER_PROBES` (addresses to
+look at, a leading `?` for one that may stay silent), and
+`CLUSTER_LOG_NAMESPACES`, `CLUSTER_HEAL_NAMESPACES` and
 `CLUSTER_RERUN_NAMESPACES`. All are comma-separated.
 
 `aemtli model-proxy`: `MODEL_UPSTREAM` (`https://api.anthropic.com`),
