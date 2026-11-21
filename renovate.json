@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Takes over from Dependabot with the same behaviour: one grouped pull request per manager per week, and every update merges itself once all checks are green, majors included. A pull request labelled no-automerge is held. See https://github.com/sapn95/.github/blob/main/CI.md.",
+  "description": "Takes over from Dependabot with the same behaviour: one grouped pull request per manager per week (on Mondays; the hosted app runs a repository at a time of its own choosing), and every update merges itself once all checks are green, majors included. A pull request labelled no-automerge is held. See https://github.com/sapn95/.github/blob/main/CI.md.",
   "extends": [
     "config:recommended",
     ":disableDependencyDashboard"
@@ -12,10 +12,7 @@
   ],
   "timezone": "Europe/Zurich",
   "schedule": [
-    "* 1-5 * * 1"
-  ],
-  "automergeSchedule": [
-    "* 1-5 * * *"
+    "* * * * 1"
   ],
   "minimumReleaseAge": "3 days",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
@@ -32,6 +29,17 @@
         "github-actions"
       ],
       "groupName": "actions"
+    },
+    {
+      "description": "Only the actions and reusable workflows, as with Dependabot: not runs-on, container or service images, nor the values given to an action (node-version in the CI matrix stays as written).",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "!action",
+        "!workflow"
+      ],
+      "enabled": false
     },
     {
       "description": "npm, in one pull request. The ranges in package.json move with each update, as Dependabot's did.",
