@@ -64,25 +64,38 @@ export function createKubeApi({
   ca,
   retries = 3,
   retryDelayMs = 1_000,
+  retryBudgetMs = 10_000,
 } = {}) {
   const url = new URL(baseUrl);
   const tls = url.protocol === 'https:';
   const caCert = tls ? (ca ?? readFileSync(`${SA}/ca.crt`)) : undefined;
   // An API server that has just restarted answers a list with 429 "storage is
   // (re)initializing" until its cache is warm, a few seconds. A read is asked
-  // again after Retry-After (at most five seconds), so a restart of one
-  // server does not fail a whole watch run. Writes are not repeated.
+  // again after Retry-After, so a restart of one server does not fail a whole
+  // watch run. One wait is at most five seconds and all waits of one call at
+  // most ten, so a server that stays busy cannot hold the watch for long.
+  // Writes are not repeated.
   return async (method, path, body, contentType) => {
+    let waited = 0;
     for (let attempt = 0; ; attempt++) {
       try {
         return await call(method, path, body, contentType);
       } catch (err) {
         if (method !== 'GET' || err.status !== 429 || attempt >= retries) throw err;
-        const wait = Math.min(5_000, (Number(err.retryAfter) || 0) * 1_000 || retryDelayMs);
+        const wait = Math.min(5_000, retryAfterMs(err.retryAfter) ?? retryDelayMs);
+        if (waited + wait > retryBudgetMs) throw err;
+        waited += wait;
         await new Promise(r => setTimeout(r, wait));
       }
     }
   };
+
+  /** Retry-After in milliseconds, from seconds or an HTTP date; undefined if it says neither. */
+  function retryAfterMs(value) {
+    if (value === undefined || value === '') return undefined;
+    const ms = /^\d+$/.test(value) ? Number(value) * 1_000 : Date.parse(value) - Date.now();
+    return Number.isFinite(ms) ? Math.max(0, ms) : undefined;
+  }
 
   function call(method, path, body, contentType = 'application/json') {
     // Read on every call: projected service account tokens are rotated.

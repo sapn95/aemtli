@@ -407,6 +407,37 @@ test('a read that meets an API server still warming up is asked again; a write a
     assert.equal(seen.length, 4);
     seen.length = 0;
     await assert.rejects(() => api('GET', '/denied'), /403 forbidden/);
+    // Retry-After is honoured, as seconds or as an HTTP date. A date has whole
+    // seconds only, so it names two from now to be a second away at least.
+    for (const header of ['1', () => new Date(Date.now() + 2_000).toUTCString()]) {
+      let once = true;
+      const slow = createServer((req, res) => {
+        if (once) {
+          once = false;
+          return res.writeHead(429, { 'content-type': 'application/json', 'retry-after': typeof header === 'function' ? header() : header }).end('{}');
+        }
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+      });
+      await new Promise(r => slow.listen(0, '127.0.0.1', r));
+      try {
+        const started = Date.now();
+        await createKubeApi({ baseUrl: `http://127.0.0.1:${slow.address().port}`, token: 't', retryDelayMs: 1 })('GET', '/x');
+        assert.ok(Date.now() - started >= 900, `waited ${Date.now() - started} ms for ${typeof header === 'function' ? 'a date' : header}`);
+      } finally {
+        slow.close();
+      }
+    }
+    // A server that stays busy is given up once the waits would pass the
+    // budget, even with tries left: 40 + 40 ms fit into 100, a third wait not.
+    let asks = 0;
+    const stubborn = createServer((req, res) => { asks++; res.writeHead(429, { 'content-type': 'application/json' }).end('{}'); });
+    await new Promise(r => stubborn.listen(0, '127.0.0.1', r));
+    try {
+      await assert.rejects(() => createKubeApi({ baseUrl: `http://127.0.0.1:${stubborn.address().port}`, token: 't', retries: 5, retryDelayMs: 40, retryBudgetMs: 100 })('GET', '/x'), /429/);
+      assert.equal(asks, 3);
+    } finally {
+      stubborn.close();
+    }
     assert.equal(seen.length, 1, 'a refusal is not a reason to ask again');
   } finally {
     server.close();

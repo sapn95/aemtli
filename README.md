@@ -523,8 +523,8 @@ RBAC should be narrowed to the same lists, so they hold even if this code is
 bypassed.
 
 A list the API server refuses with 429 while its cache warms up after a
-restart is asked for again, up to three times, so one server restarting
-does not fail a run.
+restart is asked for again after its Retry-After, up to three times and for
+at most ten seconds, so one server restarting does not fail a run.
 
 A job, `cluster-watch`, calls it every ten minutes. It pushes only when a
 problem is new or gone, uses each handgrip at most once in six hours per
